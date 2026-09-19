@@ -26,9 +26,9 @@
     const nodes = data.nodes || [];
     const online = nodes.filter((n) => n.online).length;
     statsBar.innerHTML = `
-      <span class="pill">节点 <b>${nodes.length}</b></span>
-      <span class="pill">在线 <b style="color:var(--ok)">${online}</b></span>
-      <span class="pill">离线 <b style="color:var(--bad)">${nodes.length - online}</b></span>
+      <span class="stat">节点 <b>${nodes.length}</b></span>
+      <span class="stat">在线 <b class="ok">${online}</b></span>
+      <span class="stat">离线 <b class="bad">${nodes.length - online}</b></span>
     `;
     $("#api-hint").textContent = "自动刷新 · " + new Date().toLocaleTimeString();
     $("#clock").textContent = new Date().toLocaleString();
@@ -46,6 +46,12 @@
     const m = n.metrics || {};
     const meta = n.meta || {};
     const online = n.online;
+    const tags = [
+      meta.traffic_remain ? `<span class="tag">剩余流量 <b>${esc(meta.traffic_remain)}</b></span>` : "",
+      meta.bandwidth ? `<span class="tag">带宽 <b>${esc(meta.bandwidth)}</b></span>` : "",
+      meta.renewal_date ? `<span class="tag">续费 <b>${esc(meta.renewal_date)}</b></span>` : "",
+      meta.price ? `<span class="tag">价格 <b>${esc(meta.price)}</b></span>` : "",
+    ].filter(Boolean).join("");
     return `
 <article class="card">
   <div class="card-h">
@@ -53,7 +59,7 @@
       <h3>${esc(n.name)}</h3>
       <div class="meta-line">${esc(meta.location || "")}${meta.provider ? " · " + esc(meta.provider) : ""}${m.hostname ? " · " + esc(m.hostname) : ""}</div>
     </div>
-    <span class="badge ${online ? "on" : "off"}">${online ? "在线" : "离线"}</span>
+    <span class="status ${online ? "on" : "off"}"><span class="dot" aria-hidden="true"></span>${online ? "在线" : "离线"}</span>
   </div>
   <div class="kv">
     <div><div class="k">CPU</div><div class="v">${fmtPct(m.cpu_usage)}</div>
@@ -67,16 +73,11 @@
     <div><div class="k">下行</div><div class="v">${online ? fmtRate(m.net_down) : "-"}</div></div>
   </div>
   <div class="isp">
-    <div><div class="lab">电信</div><div class="val">${fmtLat(m.latency_ct)}</div><div class="lab">丢包 ${fmtPct(m.loss_ct)}</div></div>
-    <div><div class="lab">联通</div><div class="val">${fmtLat(m.latency_cu)}</div><div class="lab">丢包 ${fmtPct(m.loss_cu)}</div></div>
-    <div><div class="lab">移动</div><div class="val">${fmtLat(m.latency_cm)}</div><div class="lab">丢包 ${fmtPct(m.loss_cm)}</div></div>
+    <div class="isp-row"><div class="lab">电信</div><div class="val">${fmtLat(m.latency_ct)}</div><div class="loss">丢包 ${fmtPct(m.loss_ct)}</div></div>
+    <div class="isp-row"><div class="lab">联通</div><div class="val">${fmtLat(m.latency_cu)}</div><div class="loss">丢包 ${fmtPct(m.loss_cu)}</div></div>
+    <div class="isp-row"><div class="lab">移动</div><div class="val">${fmtLat(m.latency_cm)}</div><div class="loss">丢包 ${fmtPct(m.loss_cm)}</div></div>
   </div>
-  <div class="tags">
-    ${meta.traffic_remain ? `<span class="tag">剩余流量 <b>${esc(meta.traffic_remain)}</b></span>` : ""}
-    ${meta.bandwidth ? `<span class="tag">带宽 <b>${esc(meta.bandwidth)}</b></span>` : ""}
-    ${meta.renewal_date ? `<span class="tag">续费 <b>${esc(meta.renewal_date)}</b></span>` : ""}
-    ${meta.price ? `<span class="tag">价格 <b>${esc(meta.price)}</b></span>` : ""}
-  </div>
+  ${tags ? `<div class="tags">${tags}</div>` : ""}
 </article>`;
   }
 

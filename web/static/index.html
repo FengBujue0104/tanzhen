@@ -8,13 +8,12 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>针</text></svg>" />
 </head>
 <body>
-  <div class="bg-grid"></div>
   <header class="top">
     <div class="brand">
-      <span class="logo">针</span>
+      <span class="logo" aria-hidden="true">针</span>
       <div>
         <h1>探针 <span class="muted">Tanzhen</span></h1>
-        <p class="sub">多节点 VPS 监控 · 简洁状态页</p>
+        <p class="sub">多节点 VPS 监控</p>
       </div>
     </div>
     <div class="actions">
@@ -24,7 +23,7 @@
   </header>
 
   <main>
-    <section id="stats-bar" class="stats-bar"></section>
+    <section id="stats-bar" class="stats-bar" aria-live="polite"></section>
     <section id="grid" class="grid"></section>
     <p id="empty" class="empty hidden">暂无节点。请前往 <a href="/admin">管理后台</a> 添加并一键扎针。</p>
   </main>

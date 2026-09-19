@@ -79,7 +79,11 @@
         <div class="admin-item">
           <div>
             <b>${esc(n.name)}</b>
-            <div class="muted" style="font-size:.75rem">${esc(n.id)} · ${n.online ? "在线" : "离线"}${n.meta && n.meta.location ? " · " + esc(n.meta.location) : ""}</div>
+            <div class="muted" style="font-size:.75rem;display:flex;align-items:center;gap:.45rem;flex-wrap:wrap">
+              <span>${esc(n.id)}</span>
+              <span class="status ${n.online ? "on" : "off"}"><span class="dot" aria-hidden="true"></span>${n.online ? "在线" : "离线"}</span>
+              ${n.meta && n.meta.location ? `<span>· ${esc(n.meta.location)}</span>` : ""}
+            </div>
           </div>
           <div class="ops">
             <button type="button" class="btn primary btn-sm" data-act="install" data-id="${esc(n.id)}">安装命令</button>
