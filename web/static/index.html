@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>探针 Tanzhen · 状态页</title>
+  <link rel="stylesheet" href="/assets/style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>针</text></svg>" />
+</head>
+<body>
+  <div class="bg-grid"></div>
+  <header class="top">
+    <div class="brand">
+      <span class="logo">针</span>
+      <div>
+        <h1>探针 <span class="muted">Tanzhen</span></h1>
+        <p class="sub">多节点 VPS 监控 · 简洁状态页</p>
+      </div>
+    </div>
+    <div class="actions">
+      <span id="clock" class="muted"></span>
+      <button id="btn-admin" class="btn ghost" type="button">管理</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="stats-bar" class="stats-bar"></section>
+    <section id="grid" class="grid"></section>
+    <p id="empty" class="empty hidden">暂无节点。点击右上角「管理」添加并一键扎针。</p>
+  </main>
+
+  <dialog id="admin-dlg">
+    <form method="dialog" class="dlg-head">
+      <h2>节点管理</h2>
+      <button value="cancel" class="btn ghost icon" type="submit" aria-label="关闭">✕</button>
+    </form>
+    <div class="dlg-body">
+      <label>Admin Token
+        <input id="admin-token" type="password" placeholder="ADMIN_TOKEN" autocomplete="off" />
+      </label>
+      <div class="row">
+        <button type="button" class="btn" id="btn-save-token">保存 Token</button>
+        <button type="button" class="btn primary" id="btn-refresh-admin">刷新列表</button>
+      </div>
+      <hr />
+      <h3>新建节点</h3>
+      <div class="form-grid">
+        <label>名称 <input id="n-name" placeholder="香港 CN2" /></label>
+        <label>位置 <input id="n-loc" placeholder="HK" /></label>
+        <label>剩余流量 <input id="n-traffic" placeholder="500GB / 无限" /></label>
+        <label>带宽 <input id="n-bw" placeholder="1Gbps" /></label>
+        <label>续费日期 <input id="n-renew" placeholder="2026-12-01" /></label>
+        <label>价格 <input id="n-price" placeholder="¥30/月" /></label>
+      </div>
+      <button type="button" class="btn primary" id="btn-create">创建并生成一键安装</button>
+      <pre id="install-out" class="code hidden"></pre>
+      <hr />
+      <h3>已有节点</h3>
+      <div id="admin-list" class="admin-list"></div>
+    </div>
+  </dialog>
+
+  <dialog id="edit-dlg">
+    <form method="dialog" class="dlg-head">
+      <h2>编辑元数据</h2>
+      <button value="cancel" class="btn ghost icon" type="submit">✕</button>
+    </form>
+    <div class="dlg-body">
+      <input type="hidden" id="e-id" />
+      <div class="form-grid">
+        <label>名称 <input id="e-name" /></label>
+        <label>位置 <input id="e-loc" /></label>
+        <label>剩余流量 <input id="e-traffic" /></label>
+        <label>带宽 <input id="e-bw" /></label>
+        <label>续费日期 <input id="e-renew" /></label>
+        <label>价格 <input id="e-price" /></label>
+        <label>厂商 <input id="e-provider" /></label>
+        <label>备注 <input id="e-note" /></label>
+      </div>
+      <button type="button" class="btn primary" id="btn-save-edit">保存</button>
+    </div>
+  </dialog>
+
+  <footer>
+    <span>Tanzhen · 自托管探针</span>
+    <span class="muted" id="api-hint"></span>
+  </footer>
+  <script src="/assets/app.js"></script>
+</body>
+</html>

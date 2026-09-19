@@ -1,0 +1,10 @@
+/data/
+/dist/
+/releases/
+*.db
+*.db-*
+/tanzhen-hub
+/tanzhen-agent
+*.exe
+.DS_Store
+.env

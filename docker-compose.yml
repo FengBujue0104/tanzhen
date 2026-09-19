@@ -1,0 +1,21 @@
+services:
+  hub:
+    build: .
+    container_name: tanzhen-hub
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      DATA_DIR: /data
+      ADMIN_TOKEN: "${ADMIN_TOKEN:-changeme}"
+      PUBLIC_URL: "${PUBLIC_URL:-http://localhost:8080}"
+      RELEASES_DIR: /app/releases
+      TZ: Asia/Hong_Kong
+    volumes:
+      - tanzhen-data:/data
+      # Optional: mount prebuilt multi-arch agents
+      # - ./releases:/app/releases:ro
+    restart: unless-stopped
+
+volumes:
+  tanzhen-data:
