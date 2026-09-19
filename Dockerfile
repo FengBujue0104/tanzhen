@@ -17,7 +17,8 @@ COPY --from=build /out/releases /app/releases
 ENV PORT=8080 \
     DATA_DIR=/data \
     RELEASES_DIR=/app/releases \
-    ADMIN_TOKEN=changeme \
+    ADMIN_USER=admin \
+    ADMIN_PASSWORD=changeme \
     TZ=Asia/Hong_Kong
 VOLUME ["/data"]
 EXPOSE 8080

@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # 探针 Tanzhen · Linux 一键扎针
-# 用法: curl -fsSL http://HUB/install.sh | bash -s -- --hub http://HUB --token TOKEN
+# 用法:
+#   curl -fsSL 'http://HUB/install.sh?hub=http://HUB&token=TOKEN' | bash
+#   curl -fsSL http://HUB/install.sh | bash -s -- --hub http://HUB --token TOKEN
 set -euo pipefail
 
-HUB_URL=""
-TOKEN=""
+# May be pre-injected by Hub when using ?hub=&token= query params
+HUB_URL="${HUB_URL:-}"
+TOKEN="${TOKEN:-}"
 VERSION="${TANZHEN_VERSION:-latest}"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 CONFIG_DIR="${CONFIG_DIR:-/etc/tanzhen}"
@@ -12,6 +15,7 @@ SERVICE_NAME="tanzhen-agent"
 
 usage() {
   echo "Usage: $0 --hub <HUB_URL> --token <TOKEN>"
+  echo "   or: curl -fsSL 'http://HUB/install.sh?hub=...&token=...' | bash"
   exit 1
 }
 

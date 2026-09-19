@@ -66,6 +66,9 @@ type CreateNodeResponse struct {
 	Token      string `json:"token"`
 	InstallCmd string `json:"install_cmd"`
 	WinCmd     string `json:"win_cmd"`
+	InstallURL string `json:"install_url"`
+	WinURL     string `json:"win_url"`
+	HubURL     string `json:"hub_url"`
 }
 
 // UpdateNodeRequest for PATCH.

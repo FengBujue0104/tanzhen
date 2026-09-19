@@ -1,6 +1,7 @@
 # 探针 Tanzhen · Windows 一键安装 (PowerShell)
-# 用法: irm http://HUB/install.ps1 | iex
-#       Install-Tanzhen -HubUrl 'http://HUB' -Token 'TOKEN'
+# 用法:
+#   irm 'http://HUB/install.ps1?hub=http://HUB&token=TOKEN' | iex
+#   irm http://HUB/install.ps1 | iex; Install-Tanzhen -HubUrl 'http://HUB' -Token 'TOKEN'
 
 function Install-Tanzhen {
     param(
@@ -44,4 +45,4 @@ TOKEN=$Token
     Write-Host "OK. ScheduledTask=$svc binary=$dest"
 }
 
-# If invoked with args via pipeline wrapper, user calls Install-Tanzhen manually after iex.
+# If Hub injected TANZHEN_HUB / TANZHEN_TOKEN (query-param install), auto-run below is appended by server.

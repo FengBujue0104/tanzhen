@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>探针 Tanzhen · 管理后台</title>
+  <link rel="stylesheet" href="/assets/style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>针</text></svg>" />
+</head>
+<body>
+  <div class="bg-grid"></div>
+
+  <!-- Login -->
+  <div id="login-view" class="login-wrap hidden">
+    <form id="login-form" class="login-card" autocomplete="on">
+      <div class="brand" style="margin-bottom:1rem">
+        <span class="logo">针</span>
+        <div>
+          <h1>管理登录</h1>
+          <p class="sub">探针 Tanzhen Admin</p>
+        </div>
+      </div>
+      <label>用户名
+        <input id="login-user" name="username" type="text" autocomplete="username" required placeholder="admin" />
+      </label>
+      <label>密码
+        <input id="login-pass" name="password" type="password" autocomplete="current-password" required placeholder="密码" />
+      </label>
+      <p id="login-err" class="form-err hidden"></p>
+      <button type="submit" class="btn primary" style="width:100%;margin-top:.5rem">登录</button>
+      <p class="muted" style="margin-top:1rem;font-size:.8rem;text-align:center">
+        <a href="/">← 返回状态页</a>
+      </p>
+    </form>
+  </div>
+
+  <!-- Dashboard -->
+  <div id="dash-view" class="hidden">
+    <header class="top">
+      <div class="brand">
+        <span class="logo">针</span>
+        <div>
+          <h1>管理后台</h1>
+          <p class="sub">节点 · 一键安装 · 元数据</p>
+        </div>
+      </div>
+      <div class="actions">
+        <span id="admin-user-label" class="muted"></span>
+        <a href="/" class="btn ghost">状态页</a>
+        <button type="button" class="btn ghost" id="btn-logout">退出</button>
+      </div>
+    </header>
+
+    <main class="admin-main">
+      <section class="panel">
+        <h2>新建节点</h2>
+        <div class="form-grid">
+          <label>名称 <input id="n-name" placeholder="香港 CN2" /></label>
+          <label>位置 <input id="n-loc" placeholder="HK" /></label>
+          <label>剩余流量 <input id="n-traffic" placeholder="500GB / 无限" /></label>
+          <label>带宽 <input id="n-bw" placeholder="1Gbps" /></label>
+          <label>续费日期 <input id="n-renew" placeholder="2026-12-01" /></label>
+          <label>价格 <input id="n-price" placeholder="¥30/月" /></label>
+        </div>
+        <div class="row">
+          <button type="button" class="btn primary" id="btn-create">创建并生成一键安装</button>
+        </div>
+      </section>
+
+      <section id="install-panel" class="panel install-panel hidden">
+        <div class="dlg-head" style="border:none;padding:0 0 .75rem;margin:0">
+          <h2 id="install-title">一键安装</h2>
+          <button type="button" class="btn ghost icon" id="btn-close-install" aria-label="关闭">✕</button>
+        </div>
+        <p class="muted" style="margin:0 0 .75rem;font-size:.85rem">复制后在目标机器执行（需 root / 管理员）。</p>
+
+        <div class="copy-block">
+          <div class="copy-label">
+            <span>Linux 一键扎针</span>
+            <button type="button" class="btn primary btn-sm" data-copy="linux-cmd">一键复制</button>
+          </div>
+          <pre id="linux-cmd" class="code"></pre>
+        </div>
+
+        <div class="copy-block">
+          <div class="copy-label">
+            <span>安装脚本 URL</span>
+            <button type="button" class="btn ghost btn-sm" data-copy="linux-url">复制 URL</button>
+          </div>
+          <pre id="linux-url" class="code"></pre>
+        </div>
+
+        <div class="copy-block">
+          <div class="copy-label">
+            <span>Windows PowerShell</span>
+            <button type="button" class="btn primary btn-sm" data-copy="win-cmd">一键复制</button>
+          </div>
+          <pre id="win-cmd" class="code"></pre>
+        </div>
+
+        <div class="copy-block">
+          <div class="copy-label">
+            <span>Token</span>
+            <button type="button" class="btn ghost btn-sm" data-copy="node-token">复制</button>
+          </div>
+          <pre id="node-token" class="code"></pre>
+        </div>
+        <p id="copy-toast" class="copy-toast hidden">已复制到剪贴板</p>
+      </section>
+
+      <section class="panel">
+        <div class="row" style="justify-content:space-between;align-items:center;margin:0 0 .75rem">
+          <h2 style="margin:0">已有节点</h2>
+          <button type="button" class="btn ghost" id="btn-refresh">刷新</button>
+        </div>
+        <div id="admin-list" class="admin-list"></div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="edit-dlg">
+    <form method="dialog" class="dlg-head">
+      <h2>编辑元数据</h2>
+      <button value="cancel" class="btn ghost icon" type="submit">✕</button>
+    </form>
+    <div class="dlg-body">
+      <input type="hidden" id="e-id" />
+      <div class="form-grid">
+        <label>名称 <input id="e-name" /></label>
+        <label>位置 <input id="e-loc" /></label>
+        <label>剩余流量 <input id="e-traffic" /></label>
+        <label>带宽 <input id="e-bw" /></label>
+        <label>续费日期 <input id="e-renew" /></label>
+        <label>价格 <input id="e-price" /></label>
+        <label>厂商 <input id="e-provider" /></label>
+        <label>备注 <input id="e-note" /></label>
+      </div>
+      <button type="button" class="btn primary" id="btn-save-edit">保存</button>
+    </div>
+  </dialog>
+
+  <script src="/assets/admin.js"></script>
+</body>
+</html>

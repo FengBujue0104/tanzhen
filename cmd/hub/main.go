@@ -17,9 +17,10 @@ var staticRoot embed.FS
 func main() {
 	port := hub.Env("PORT", "8080")
 	dataDir := hub.Env("DATA_DIR", "./data")
-	adminToken := hub.Env("ADMIN_TOKEN", "changeme")
 	publicURL := hub.Env("PUBLIC_URL", "")
 	releasesDir := hub.Env("RELEASES_DIR", "./releases")
+
+	adminUser, adminPass := hub.ResolveAdminCreds()
 
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		log.Fatal(err)
@@ -36,11 +37,18 @@ func main() {
 		log.Fatal(err)
 	}
 
-	srv := hub.NewServer(store, adminToken, publicURL, static)
+	srv := hub.NewServer(store, hub.Config{
+		AdminUser:     adminUser,
+		AdminPassword: adminPass,
+		PublicURL:     publicURL,
+	}, static)
 	srv.AttachReleases(releasesDir)
 
 	addr := ":" + port
-	log.Printf("tanzhen hub listening on %s (data=%s releases=%s)", addr, dataDir, releasesDir)
+	log.Printf("tanzhen hub listening on %s (data=%s releases=%s admin_user=%s)", addr, dataDir, releasesDir, adminUser)
+	if adminPass == "changeme" {
+		log.Printf("WARNING: using default admin password 'changeme' — set ADMIN_PASSWORD (or legacy ADMIN_TOKEN)")
+	}
 	if err := http.ListenAndServe(addr, srv.Handler()); err != nil {
 		log.Fatal(err)
 	}

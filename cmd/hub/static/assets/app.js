@@ -3,9 +3,6 @@
   const grid = $("#grid");
   const empty = $("#empty");
   const statsBar = $("#stats-bar");
-  const dlg = $("#admin-dlg");
-  const editDlg = $("#edit-dlg");
-  const TOKEN_KEY = "tanzhen_admin_token";
 
   const fmtBytes = (n) => {
     if (n == null || isNaN(n)) return "-";
@@ -18,9 +15,6 @@
   const fmtPct = (n) => (n == null || isNaN(n) ? "-" : Number(n).toFixed(1) + "%");
   const fmtLat = (n) => (n == null || n < 0 || isNaN(n) ? "-" : Math.round(n) + "ms");
   const barClass = (p) => (p >= 90 ? "bar danger" : p >= 75 ? "bar warn" : "bar");
-
-  function token() { return localStorage.getItem(TOKEN_KEY) || ""; }
-  function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
 
   async function fetchStatus() {
     const r = await fetch("/api/status");
@@ -94,125 +88,6 @@
     try { render(await fetchStatus()); }
     catch (e) { console.warn(e); }
   }
-
-  $("#btn-admin").onclick = () => {
-    $("#admin-token").value = token();
-    dlg.showModal();
-    if (token()) loadAdmin();
-  };
-  $("#btn-save-token").onclick = () => {
-    setToken($("#admin-token").value.trim());
-    loadAdmin();
-  };
-  $("#btn-refresh-admin").onclick = () => loadAdmin();
-
-  async function adminFetch(path, opts = {}) {
-    const headers = Object.assign({ "Content-Type": "application/json", "X-Admin-Token": token() }, opts.headers || {});
-    const r = await fetch(path, { ...opts, headers });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || r.statusText);
-    return j;
-  }
-
-  async function loadAdmin() {
-    try {
-      const data = await adminFetch("/api/admin/nodes");
-      const list = $("#admin-list");
-      list.innerHTML = (data.nodes || []).map((n) => `
-        <div class="admin-item">
-          <div>
-            <b>${esc(n.name)}</b>
-            <div class="muted" style="font-size:.75rem">${n.id} · ${n.online ? "在线" : "离线"}</div>
-          </div>
-          <div class="ops">
-            <button type="button" class="btn ghost" data-act="install" data-id="${n.id}">安装命令</button>
-            <button type="button" class="btn ghost" data-act="edit" data-id="${n.id}">编辑</button>
-            <button type="button" class="btn danger" data-act="del" data-id="${n.id}">删除</button>
-          </div>
-        </div>`).join("") || `<p class="muted">暂无节点</p>`;
-      list.querySelectorAll("button[data-act]").forEach((btn) => {
-        btn.onclick = () => onAdminAct(btn.dataset.act, btn.dataset.id, data.nodes);
-      });
-    } catch (e) {
-      $("#admin-list").innerHTML = `<p style="color:var(--bad)">${esc(e.message)}</p>`;
-    }
-  }
-
-  async function onAdminAct(act, id, nodes) {
-    if (act === "del") {
-      if (!confirm("确认删除该节点？")) return;
-      await adminFetch("/api/admin/nodes/" + id, { method: "DELETE" });
-      loadAdmin(); loop();
-      return;
-    }
-    if (act === "install") {
-      const info = await adminFetch("/api/admin/nodes/" + id + "/install");
-      const out = $("#install-out");
-      out.classList.remove("hidden");
-      out.textContent = `# Linux 一键扎针\n${info.install_cmd}\n\n# Windows (PowerShell 管理员)\n${info.win_cmd}\n\nHUB=${info.hub_url}\nTOKEN=${info.token}`;
-      return;
-    }
-    if (act === "edit") {
-      const n = (nodes || []).find((x) => x.id === id);
-      if (!n) return;
-      $("#e-id").value = id;
-      $("#e-name").value = n.name || "";
-      const m = n.meta || {};
-      $("#e-loc").value = m.location || "";
-      $("#e-traffic").value = m.traffic_remain || "";
-      $("#e-bw").value = m.bandwidth || "";
-      $("#e-renew").value = m.renewal_date || "";
-      $("#e-price").value = m.price || "";
-      $("#e-provider").value = m.provider || "";
-      $("#e-note").value = m.note || "";
-      editDlg.showModal();
-    }
-  }
-
-  $("#btn-create").onclick = async () => {
-    try {
-      const body = {
-        name: $("#n-name").value.trim(),
-        meta: {
-          location: $("#n-loc").value.trim(),
-          traffic_remain: $("#n-traffic").value.trim(),
-          bandwidth: $("#n-bw").value.trim(),
-          renewal_date: $("#n-renew").value.trim(),
-          price: $("#n-price").value.trim(),
-        },
-      };
-      const res = await adminFetch("/api/admin/nodes", { method: "POST", body: JSON.stringify(body) });
-      const out = $("#install-out");
-      out.classList.remove("hidden");
-      out.textContent = `# 节点 ${res.name} (${res.id})\n# Linux 一键扎针\n${res.install_cmd}\n\n# Windows\n${res.win_cmd}\n\nTOKEN=${res.token}`;
-      loadAdmin(); loop();
-    } catch (e) {
-      alert(e.message);
-    }
-  };
-
-  $("#btn-save-edit").onclick = async () => {
-    const id = $("#e-id").value;
-    try {
-      await adminFetch("/api/admin/nodes/" + id, {
-        method: "PATCH",
-        body: JSON.stringify({
-          name: $("#e-name").value.trim(),
-          meta: {
-            location: $("#e-loc").value.trim(),
-            traffic_remain: $("#e-traffic").value.trim(),
-            bandwidth: $("#e-bw").value.trim(),
-            renewal_date: $("#e-renew").value.trim(),
-            price: $("#e-price").value.trim(),
-            provider: $("#e-provider").value.trim(),
-            note: $("#e-note").value.trim(),
-          },
-        }),
-      });
-      editDlg.close();
-      loadAdmin(); loop();
-    } catch (e) { alert(e.message); }
-  };
 
   loop();
   setInterval(loop, 2000);

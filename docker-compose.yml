@@ -7,7 +7,9 @@ services:
     environment:
       PORT: "8080"
       DATA_DIR: /data
-      ADMIN_TOKEN: "${ADMIN_TOKEN:-changeme}"
+      ADMIN_USER: "${ADMIN_USER:-admin}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-changeme}"
+      # Legacy: ADMIN_TOKEN still accepted as password if ADMIN_PASSWORD unset
       PUBLIC_URL: "${PUBLIC_URL:-http://localhost:8080}"
       RELEASES_DIR: /app/releases
       TZ: Asia/Hong_Kong
