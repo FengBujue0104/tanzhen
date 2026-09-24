@@ -3,35 +3,60 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>探针 Tanzhen · 状态页</title>
+  <meta name="color-scheme" content="dark light" />
+  <title>探针 Tanzhen · 状态</title>
   <link rel="stylesheet" href="/assets/style.css" />
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>针</text></svg>" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232a78d6'/%3E%3Cpath d='M8 24 24 8M8 8l7 7' stroke='%23fff' stroke-width='2.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E" />
 </head>
 <body>
   <header class="top">
     <div class="brand">
-      <span class="logo" aria-hidden="true">针</span>
-      <div>
-        <h1>探针 <span class="muted">Tanzhen</span></h1>
-        <p class="sub">多节点 VPS 监控</p>
+      <span class="mark" aria-hidden="true">
+        <svg width="15" height="15" viewBox="0 0 32 32"><path d="M8 24 24 8M8 8l7 7" stroke="currentColor" stroke-width="3" fill="none" stroke-linecap="round"/></svg>
+      </span>
+      <div class="wordmark">
+        <h1>探针</h1>
+        <span class="latin">Tanzhen</span>
       </div>
     </div>
     <div class="actions">
-      <span id="clock" class="muted"></span>
-      <a href="/admin" class="admin-link" title="管理后台">管理</a>
+      <span class="clock" id="clock"></span>
+      <button type="button" class="btn ghost icon" id="btn-theme" aria-label="切换主题" title="切换亮 / 暗主题"></button>
+      <a class="btn ghost" href="/admin">管理</a>
     </div>
   </header>
 
   <main>
-    <section id="stats-bar" class="stats-bar" aria-live="polite"></section>
-    <section id="grid" class="grid"></section>
-    <p id="empty" class="empty hidden">暂无节点。请前往 <a href="/admin">管理后台</a> 添加并一键扎针。</p>
+    <!-- figures: one row, hairline-separated, no cards -->
+    <section class="summary" id="summary" aria-live="polite"></section>
+
+    <!-- one control row above everything it scopes -->
+    <div class="controls">
+      <label class="dim controls-label" for="sort">排序</label>
+      <select id="sort">
+        <option value="default">默认</option>
+        <option value="cpu">CPU</option>
+        <option value="mem">内存</option>
+        <option value="traffic">流量</option>
+        <option value="name">名称</option>
+      </select>
+      <span class="spacer"></span>
+      <button type="button" class="btn" id="btn-table" aria-pressed="false">表格视图</button>
+    </div>
+
+    <section class="rack" id="rack"></section>
+
+    <!-- the table-view twin: every value the charts show, without colour -->
+    <section class="tableview hidden" id="tableview" tabindex="-1"></section>
+
+    <p class="empty hidden" id="empty">暂无节点。前往 <a href="/admin">管理后台</a> 添加，一键扎针。</p>
   </main>
 
   <footer>
-    <span>Tanzhen · 自托管探针</span>
-    <span class="muted" id="api-hint"></span>
+    <span>探针 Tanzhen · 自托管 VPS 探针</span>
+    <span id="updated"></span>
   </footer>
+
   <script src="/assets/app.js"></script>
 </body>
 </html>

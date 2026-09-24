@@ -1,0 +1,13 @@
+# Repo blobs are LF. Windows checkouts with core.autocrlf=true otherwise make
+# every file show as modified and gofmt list the whole tree.
+*.go    text eol=lf
+*.sh    text eol=lf
+*.ps1   text eol=lf
+*.css   text eol=lf
+*.js    text eol=lf
+*.html  text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+Dockerfile text eol=lf
+Makefile text eol=lf
+cmd/hub/static/** text eol=lf

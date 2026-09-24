@@ -1,12 +1,26 @@
+/* 探针 Tanzhen — admin console.
+
+  The console is a separate app on the same stylesheet. It creates nodes, edits
+  their subscription metadata, and hands out the one-command installer; the
+  token is shown once and written to a permission-restricted file on the target.
+ */
 (() => {
+  "use strict";
+
   const $ = (s, el = document) => el.querySelector(s);
   const loginView = $("#login-view");
   const dashView = $("#dash-view");
   const editDlg = $("#edit-dlg");
   const installPanel = $("#install-panel");
+  const btnTheme = $("#btn-theme");
 
-  function esc(s) {
-    return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
+  /* --------------------------------------------------------------- helpers -- */
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = String(text);
+    return e;
   }
 
   async function api(path, opts = {}) {
@@ -20,6 +34,66 @@
     }
     return j;
   }
+
+  /* Traffic is configured in bytes but typed by humans as "500GiB". */
+  const QUOTA_UNITS = {
+    "": 1, b: 1, k: 1024, kb: 1024, kib: 1024,
+    m: 1048576, mb: 1048576, mib: 1048576,
+    g: 1073741824, gb: 1073741824, gib: 1073741824,
+    t: 1099511627776, tb: 1099511627776, tib: 1099511627776,
+    p: 1125899906842624, pb: 1125899906842624, pib: 1125899906842624,
+  };
+
+  const UNLIMITED_WORDS = /^(无限|不限|不统计|unlimited|inf|none|-)$/i;
+
+  // 0 means "no quota"; null means the input was not understood.
+  function parseQuota(s) {
+    const t = String(s == null ? "" : s).trim();
+    if (!t) return 0;
+    if (UNLIMITED_WORDS.test(t)) return 0;
+    const m = /^([0-9]*\.?[0-9]+)\s*([a-zA-Z]*)$/.exec(t);
+    if (!m) return null;
+    const unit = QUOTA_UNITS[m[2].toLowerCase()];
+    if (!unit) return null;
+    const v = parseFloat(m[1]) * unit;
+    if (!isFinite(v) || v < 0) return null;
+    return Math.round(v);
+  }
+
+  function fmtQuota(n) {
+    if (!n) return "";
+    const u = [["TiB", 1099511627776], ["GiB", 1073741824], ["MiB", 1048576], ["KiB", 1024]];
+    for (const [name, size] of u) {
+      if (n >= size) return (n / size).toFixed(n / size < 10 ? 2 : 1).replace(/\.?0+$/, "") + " " + name;
+    }
+    return n + " B";
+  }
+
+  function fmtBytes(n) {
+    if (n == null || !isFinite(n) || n < 0) return "—";
+    const u = ["B", "KB", "MB", "GB", "TB"];
+    let i = 0;
+    let x = Number(n);
+    while (x >= 1024 && i < u.length - 1) { x /= 1024; i++; }
+    return x.toFixed(i === 0 ? 0 : x < 10 ? 2 : 1) + " " + u[i];
+  }
+
+  function fmtPct(n) {
+    if (n == null || !isFinite(n) || n < 0) return "—";
+    return Number(n).toFixed(1) + "%";
+  }
+
+  function fmtClock(s) {
+    if (!s) return "";
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return "";
+    const p = (x) => String(x).padStart(2, "0");
+    return p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+
+  function shQuote(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
+
+  /* ------------------------------------------------------------------ auth -- */
 
   async function checkAuth() {
     try {
@@ -35,6 +109,7 @@
   function showLogin() {
     loginView.classList.remove("hidden");
     dashView.classList.add("hidden");
+    $("#login-user").focus();
   }
 
   function showDash(user) {
@@ -58,136 +133,180 @@
       });
       showDash(res.user);
     } catch (err) {
-      errEl.textContent = err.message || "登录失败";
+      errEl.textContent = err.status === 429 ? "尝试过于频繁，请稍后再试" : (err.message || "登录失败");
       errEl.classList.remove("hidden");
     }
   };
 
   $("#btn-logout").onclick = async () => {
-    try { await api("/api/admin/logout", { method: "POST", body: "{}" }); } catch (_) {}
+    try { await api("/api/admin/logout", { method: "POST", body: "{}" }); } catch (_) { /* ignore */ }
+    $("#login-pass").value = "";
     showLogin();
   };
 
   $("#btn-refresh").onclick = () => loadAdmin();
   $("#btn-close-install").onclick = () => installPanel.classList.add("hidden");
+  $("#btn-cancel-edit").onclick = () => editDlg.close();
+
+  /* -------------------------------------------------------------- node list -- */
+
+  function trafficLine(n) {
+    const t = n.traffic || {};
+    const m = n.meta || {};
+    if (t.unlimited || !t.period_days) {
+      const tot = n.metrics ? (n.metrics.net_total_up || 0) + (n.metrics.net_total_down || 0) : 0;
+      return "流量未统计 · 开机累计 " + fmtBytes(tot);
+    }
+    const parts = ["已用 " + fmtBytes(t.used)];
+    if (t.quota) parts.push("/ " + fmtBytes(t.quota) + " (" + fmtPct(t.pct) + ")");
+    return "流量 " + parts.join(" ") + " · " + t.period_days + " 天周期";
+  }
 
   async function loadAdmin() {
     try {
       const data = await api("/api/admin/nodes");
       const list = $("#admin-list");
-      list.innerHTML = (data.nodes || []).map((n) => `
-        <div class="admin-item">
-          <div>
-            <b>${esc(n.name)}</b>
-            <div class="muted" style="font-size:.75rem;display:flex;align-items:center;gap:.45rem;flex-wrap:wrap">
-              <span>${esc(n.id)}</span>
-              <span class="status ${n.online ? "on" : "off"}"><span class="dot" aria-hidden="true"></span>${n.online ? "在线" : "离线"}</span>
-              ${n.meta && n.meta.location ? `<span>· ${esc(n.meta.location)}</span>` : ""}
-            </div>
-          </div>
-          <div class="ops">
-            <button type="button" class="btn primary btn-sm" data-act="install" data-id="${esc(n.id)}">安装命令</button>
-            <button type="button" class="btn ghost btn-sm" data-act="edit" data-id="${esc(n.id)}">编辑</button>
-            <button type="button" class="btn danger btn-sm" data-act="del" data-id="${esc(n.id)}">删除</button>
-          </div>
-        </div>`).join("") || `<p class="muted">暂无节点，在上方创建后即可复制一键安装命令。</p>`;
+      while (list.firstChild) list.removeChild(list.firstChild);
+      const nodes = data.nodes || [];
+      if (!nodes.length) {
+        list.appendChild(el("p", "muted", "暂无节点。在上方创建后即可复制一键安装命令。"));
+        return;
+      }
+      for (const n of nodes) {
+        const row = el("div", "admin-item");
+        const who = el("div", "who");
+        who.appendChild(el("b", null, n.name || n.id));
+        const meta = el("div", "meta");
+        meta.appendChild(el("span", "mono", n.id));
+        const state = el("span", "state " + (n.online ? "on" : "off"));
+        state.appendChild(el("span", "dot"));
+        state.appendChild(document.createTextNode(n.online ? "在线" : "离线"));
+        meta.appendChild(state);
+        // last_seen is Go's zero time ("0001-01-01T00:00:00Z") until the first
+        // heartbeat lands - a non-empty string, so test the parsed value.
+        if (new Date(n.last_seen || "").getTime() > 0) {
+          meta.appendChild(el("span", null, "上报 " + fmtClock(n.last_seen)));
+        }
+        who.appendChild(meta);
+        who.appendChild(el("div", "meta", trafficLine(n)));
+        row.appendChild(who);
+
+        const ops = el("div", "ops");
+        for (const [act, label, cls] of [["install", "安装命令", "primary"], ["edit", "编辑", "ghost"], ["del", "删除", "danger"]]) {
+          const b = el("button", "btn btn-sm " + cls, label);
+          b.type = "button";
+          b.dataset.act = act;
+          b.dataset.id = n.id;
+          ops.appendChild(b);
+        }
+        row.appendChild(ops);
+        list.appendChild(row);
+      }
       list.querySelectorAll("button[data-act]").forEach((btn) => {
-        btn.onclick = () => onAdminAct(btn.dataset.act, btn.dataset.id, data.nodes);
+        btn.onclick = () => onAdminAct(btn.dataset.act, btn.dataset.id, nodes);
       });
     } catch (e) {
       if (e.status === 401) { showLogin(); return; }
-      $("#admin-list").innerHTML = `<p style="color:var(--bad)">${esc(e.message)}</p>`;
+      const list = $("#admin-list");
+      while (list.firstChild) list.removeChild(list.firstChild);
+      list.appendChild(el("p", "form-err", e.message));
     }
-  }
-
-  function showInstall(info) {
-    $("#install-title").textContent = `一键安装 · ${info.name || ""}`;
-    $("#linux-cmd").textContent = info.install_cmd || "";
-    $("#linux-url").textContent = info.install_url || "";
-    $("#win-cmd").textContent = info.win_cmd || "";
-    $("#node-token").textContent = info.token || "";
-    installPanel.classList.remove("hidden");
-    installPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
   async function onAdminAct(act, id, nodes) {
     if (act === "del") {
-      if (!confirm("确认删除该节点？")) return;
-      await api("/api/admin/nodes/" + id, { method: "DELETE" });
-      loadAdmin();
+      if (!confirm("确认删除该节点？删除后其 Token 立即失效，已安装的探针将上报失败。")) return;
+      try {
+        await api("/api/admin/nodes/" + encodeURIComponent(id), { method: "DELETE" });
+        loadAdmin();
+      } catch (e) { alert(e.message); }
       return;
     }
     if (act === "install") {
-      const info = await api("/api/admin/nodes/" + id + "/install");
-      showInstall(info);
+      try {
+        showInstall(await api("/api/admin/nodes/" + encodeURIComponent(id) + "/install"));
+      } catch (e) { alert(e.message); }
       return;
     }
     if (act === "edit") {
       const n = (nodes || []).find((x) => x.id === id);
       if (!n) return;
+      const m = n.meta || {};
       $("#e-id").value = id;
       $("#e-name").value = n.name || "";
-      const m = n.meta || {};
       $("#e-loc").value = m.location || "";
-      $("#e-traffic").value = m.traffic_remain || "";
+      $("#e-provider").value = m.provider || "";
       $("#e-bw").value = m.bandwidth || "";
       $("#e-renew").value = m.renewal_date || "";
       $("#e-price").value = m.price || "";
-      $("#e-provider").value = m.provider || "";
+      $("#e-quota").value = fmtQuota(m.traffic_quota);
+      $("#e-period").value = m.traffic_period ? String(m.traffic_period) : "";
       $("#e-note").value = m.note || "";
       editDlg.showModal();
     }
   }
 
+  /* ------------------------------------------------------------ install cmd -- */
+
+  function showInstall(info) {
+    $("#install-title").textContent = "一键安装 · " + (info.name || "");
+    $("#linux-cmd").textContent = info.install_cmd || "";
+    $("#win-cmd").textContent = info.win_cmd || "";
+    $("#node-token").textContent = info.token || "";
+
+    // The one-command form has to carry the token in the URL. Offer the
+    // equivalent form that keeps it out of the URL too, for anyone who would
+    // rather not paste a secret into a shell.
+    const hub = String(info.hub_url || "").replace(/\/+$/, "");
+    const tok = info.token || "";
+    $("#linux-url").textContent =
+      "export HUB_URL=" + shQuote(hub) + "\n" +
+      "export TOKEN=" + shQuote(tok) + "\n" +
+      "curl -fsSL \"$HUB_URL/install.sh\" | sh";
+    installPanel.classList.remove("hidden");
+    installPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  function metaFromForm(prefix) {
+    const quota = parseQuota($("#" + prefix + "-quota").value);
+    if (quota === null) throw new Error("流量配额格式无法识别，示例：500GiB、1TiB、无限");
+    const period = parseInt($("#" + prefix + "-period").value, 10);
+    return {
+      location: $("#" + prefix + "-loc").value.trim(),
+      provider: $("#" + prefix + "-provider").value.trim(),
+      bandwidth: $("#" + prefix + "-bw").value.trim(),
+      renewal_date: $("#" + prefix + "-renew").value.trim(),
+      price: $("#" + prefix + "-price").value.trim(),
+      traffic_quota: quota,
+      traffic_period: isFinite(period) && period > 0 ? period : 0,
+      note: $("#" + prefix + "-note") ? $("#" + prefix + "-note").value.trim() : "",
+    };
+  }
+
   $("#btn-create").onclick = async () => {
     try {
-      const body = {
-        name: $("#n-name").value.trim(),
-        meta: {
-          location: $("#n-loc").value.trim(),
-          traffic_remain: $("#n-traffic").value.trim(),
-          bandwidth: $("#n-bw").value.trim(),
-          renewal_date: $("#n-renew").value.trim(),
-          price: $("#n-price").value.trim(),
-        },
-      };
+      const body = { name: $("#n-name").value.trim(), meta: metaFromForm("n") };
       const res = await api("/api/admin/nodes", { method: "POST", body: JSON.stringify(body) });
-      showInstall({
-        name: res.name,
-        token: res.token,
-        install_cmd: res.install_cmd,
-        install_url: res.install_url,
-        win_cmd: res.win_cmd,
-      });
-      ["n-name","n-loc","n-traffic","n-bw","n-renew","n-price"].forEach((id) => { $(`#${id}`).value = ""; });
+      showInstall(res);
+      ["n-name", "n-loc", "n-provider", "n-bw", "n-renew", "n-price", "n-quota", "n-period"]
+        .forEach((id) => { $("#" + id).value = ""; });
       loadAdmin();
-    } catch (e) {
-      alert(e.message);
-    }
+    } catch (e) { alert(e.message); }
   };
 
   $("#btn-save-edit").onclick = async () => {
     const id = $("#e-id").value;
     try {
-      await api("/api/admin/nodes/" + id, {
+      await api("/api/admin/nodes/" + encodeURIComponent(id), {
         method: "PATCH",
-        body: JSON.stringify({
-          name: $("#e-name").value.trim(),
-          meta: {
-            location: $("#e-loc").value.trim(),
-            traffic_remain: $("#e-traffic").value.trim(),
-            bandwidth: $("#e-bw").value.trim(),
-            renewal_date: $("#e-renew").value.trim(),
-            price: $("#e-price").value.trim(),
-            provider: $("#e-provider").value.trim(),
-            note: $("#e-note").value.trim(),
-          },
-        }),
+        body: JSON.stringify({ name: $("#e-name").value.trim(), meta: metaFromForm("e") }),
       });
       editDlg.close();
       loadAdmin();
     } catch (e) { alert(e.message); }
   };
+
+  /* ------------------------------------------------------------------ copy -- */
 
   async function copyText(text) {
     try {
@@ -208,10 +327,39 @@
 
   document.querySelectorAll("[data-copy]").forEach((btn) => {
     btn.onclick = () => {
-      const el = $("#" + btn.dataset.copy);
-      if (el) copyText(el.textContent.trim());
+      const t = $("#" + btn.dataset.copy).textContent.trim();
+      if (t) copyText(t);
     };
   });
+
+  /* ----------------------------------------------------------------- theme -- */
+
+  const THEME_KEY = "tanzhen-theme";
+
+  function effectiveTheme() {
+    const stamp = document.documentElement.dataset.theme;
+    if (stamp) return stamp;
+    return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  }
+
+  function paintThemeButton() {
+    const dark = effectiveTheme() === "dark";
+    btnTheme.textContent = dark ? "亮色" : "暗色";
+    btnTheme.title = dark ? "切换到亮色主题" : "切换到暗色主题";
+  }
+
+  btnTheme.addEventListener("click", () => {
+    const next = effectiveTheme() === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem(THEME_KEY, next); } catch (_) { /* ignore */ }
+    paintThemeButton();
+  });
+
+  try {
+    const saved = localStorage.getItem(THEME_KEY);
+    if (saved === "light" || saved === "dark") document.documentElement.dataset.theme = saved;
+  } catch (_) { /* ignore */ }
+  paintThemeButton();
 
   checkAuth();
 })();

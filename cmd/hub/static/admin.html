@@ -3,32 +3,35 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>探针 Tanzhen · 管理后台</title>
+  <meta name="color-scheme" content="dark light" />
+  <title>探针 Tanzhen · 管理</title>
   <link rel="stylesheet" href="/assets/style.css" />
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>针</text></svg>" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232a78d6'/%3E%3Cpath d='M8 24 24 8M8 8l7 7' stroke='%23fff' stroke-width='2.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E" />
 </head>
 <body>
   <!-- Login -->
   <div id="login-view" class="login-wrap hidden">
     <form id="login-form" class="login-card" autocomplete="on">
-      <div class="brand" style="margin-bottom:1rem">
-        <span class="logo" aria-hidden="true">针</span>
-        <div>
-          <h1>管理登录</h1>
-          <p class="sub">探针 Tanzhen Admin</p>
+      <div class="brand">
+        <span class="mark" aria-hidden="true">
+          <svg width="15" height="15" viewBox="0 0 32 32"><path d="M8 24 24 8M8 8l7 7" stroke="currentColor" stroke-width="3" fill="none" stroke-linecap="round"/></svg>
+        </span>
+        <div class="wordmark">
+          <h1>管理后台</h1>
+          <span class="latin">Tanzhen</span>
         </div>
       </div>
-      <label>用户名
+      <label class="field">用户名
         <input id="login-user" name="username" type="text" autocomplete="username" required placeholder="admin" />
       </label>
-      <label>密码
+      <label class="field">密码
         <input id="login-pass" name="password" type="password" autocomplete="current-password" required placeholder="密码" />
       </label>
       <p id="login-err" class="form-err hidden"></p>
-      <button type="submit" class="btn primary" style="width:100%;margin-top:.5rem">登录</button>
-      <p class="muted" style="margin-top:1rem;font-size:.8rem;text-align:center">
-        <a href="/">← 返回状态页</a>
-      </p>
+      <div class="row">
+        <button type="submit" class="btn primary" id="btn-login">登录</button>
+        <a class="btn ghost" href="/">返回状态页</a>
+      </div>
     </form>
   </div>
 
@@ -36,29 +39,39 @@
   <div id="dash-view" class="hidden">
     <header class="top">
       <div class="brand">
-        <span class="logo" aria-hidden="true">针</span>
-        <div>
+        <span class="mark" aria-hidden="true">
+          <svg width="15" height="15" viewBox="0 0 32 32"><path d="M8 24 24 8M8 8l7 7" stroke="currentColor" stroke-width="3" fill="none" stroke-linecap="round"/></svg>
+        </span>
+        <div class="wordmark">
           <h1>管理后台</h1>
-          <p class="sub">节点 · 一键安装 · 元数据</p>
+          <span class="latin">Tanzhen</span>
         </div>
       </div>
       <div class="actions">
-        <span id="admin-user-label" class="muted"></span>
-        <a href="/" class="btn ghost">状态页</a>
+        <span class="clock" id="admin-user-label"></span>
+        <button type="button" class="btn ghost icon" id="btn-theme" aria-label="切换主题" title="切换亮 / 暗主题"></button>
+        <a class="btn ghost" href="/">状态页</a>
         <button type="button" class="btn ghost" id="btn-logout">退出</button>
       </div>
     </header>
 
     <main class="admin-main">
       <section class="panel">
-        <h2>新建节点</h2>
+        <div class="panel-head"><h2>新建节点</h2></div>
+        <p class="note">创建后即生成一条一键安装命令，在目标机器执行便会自动上报。</p>
         <div class="form-grid">
-          <label>名称 <input id="n-name" placeholder="香港 CN2" /></label>
-          <label>位置 <input id="n-loc" placeholder="HK" /></label>
-          <label>剩余流量 <input id="n-traffic" placeholder="500GB / 无限" /></label>
-          <label>带宽 <input id="n-bw" placeholder="1Gbps" /></label>
-          <label>续费日期 <input id="n-renew" placeholder="2026-12-01" /></label>
-          <label>价格 <input id="n-price" placeholder="¥30/月" /></label>
+          <label class="field">名称 <input id="n-name" placeholder="香港 CN2" /></label>
+          <label class="field">位置 <input id="n-loc" placeholder="香港 / HKG" /></label>
+          <label class="field">厂商 <input id="n-provider" placeholder="阿里云" /></label>
+          <label class="field">带宽 <input id="n-bw" placeholder="1Gbps" /></label>
+          <label class="field">续费日期 <input id="n-renew" type="date" /></label>
+          <label class="field">价格 <input id="n-price" placeholder="¥30/月" /></label>
+          <label class="field">流量配额 <span class="hint">如 500GiB，留空不统计</span>
+            <input id="n-quota" placeholder="500GiB / 1TiB / 无限" />
+          </label>
+          <label class="field">计费周期 <span class="hint">天</span>
+            <input id="n-period" type="number" min="0" step="1" placeholder="30" />
+          </label>
         </div>
         <div class="row">
           <button type="button" class="btn primary" id="btn-create">创建并生成一键安装</button>
@@ -66,18 +79,26 @@
       </section>
 
       <section id="install-panel" class="panel install-panel hidden">
-        <div class="dlg-head" style="border:none;padding:0 0 .75rem;margin:0">
+        <div class="panel-head">
           <h2 id="install-title">一键安装</h2>
           <button type="button" class="btn ghost icon" id="btn-close-install" aria-label="关闭">✕</button>
         </div>
-        <p class="muted" style="margin:0 0 .75rem;font-size:.85rem">复制后在目标机器执行（需 root / 管理员）。</p>
+        <p class="note">在目标机器上执行（需 root / 管理员）。Token 会被写入权限受限的文件，不进入进程列表。</p>
 
         <div class="copy-block">
           <div class="copy-label">
-            <span>Linux 一键扎针</span>
-            <button type="button" class="btn primary btn-sm" data-copy="linux-cmd">一键复制</button>
+            <span>Linux / macOS 一键扎针</span>
+            <button type="button" class="btn primary btn-sm" data-copy="linux-cmd">复制命令</button>
           </div>
           <pre id="linux-cmd" class="code"></pre>
+        </div>
+
+        <div class="copy-block">
+          <div class="copy-label">
+            <span>Windows PowerShell 一键扎针</span>
+            <button type="button" class="btn primary btn-sm" data-copy="win-cmd">复制命令</button>
+          </div>
+          <pre id="win-cmd" class="code"></pre>
         </div>
 
         <div class="copy-block">
@@ -90,15 +111,7 @@
 
         <div class="copy-block">
           <div class="copy-label">
-            <span>Windows PowerShell</span>
-            <button type="button" class="btn primary btn-sm" data-copy="win-cmd">一键复制</button>
-          </div>
-          <pre id="win-cmd" class="code"></pre>
-        </div>
-
-        <div class="copy-block">
-          <div class="copy-label">
-            <span>Token</span>
+            <span>Token <span class="dim">（仅显示一次，请妥善保存）</span></span>
             <button type="button" class="btn ghost btn-sm" data-copy="node-token">复制</button>
           </div>
           <pre id="node-token" class="code"></pre>
@@ -107,9 +120,9 @@
       </section>
 
       <section class="panel">
-        <div class="row" style="justify-content:space-between;align-items:center;margin:0 0 .75rem">
-          <h2 style="margin:0">已有节点</h2>
-          <button type="button" class="btn ghost" id="btn-refresh">刷新</button>
+        <div class="panel-head">
+          <h2>已有节点</h2>
+          <button type="button" class="btn ghost btn-sm" id="btn-refresh">刷新</button>
         </div>
         <div id="admin-list" class="admin-list"></div>
       </section>
@@ -119,21 +132,29 @@
   <dialog id="edit-dlg">
     <form method="dialog" class="dlg-head">
       <h2>编辑元数据</h2>
-      <button value="cancel" class="btn ghost icon" type="submit">✕</button>
+      <button value="cancel" class="btn ghost icon" type="submit" aria-label="关闭">✕</button>
     </form>
     <div class="dlg-body">
       <input type="hidden" id="e-id" />
       <div class="form-grid">
-        <label>名称 <input id="e-name" /></label>
-        <label>位置 <input id="e-loc" /></label>
-        <label>剩余流量 <input id="e-traffic" /></label>
-        <label>带宽 <input id="e-bw" /></label>
-        <label>续费日期 <input id="e-renew" /></label>
-        <label>价格 <input id="e-price" /></label>
-        <label>厂商 <input id="e-provider" /></label>
-        <label>备注 <input id="e-note" /></label>
+        <label class="field">名称 <input id="e-name" /></label>
+        <label class="field">位置 <input id="e-loc" /></label>
+        <label class="field">厂商 <input id="e-provider" /></label>
+        <label class="field">带宽 <input id="e-bw" /></label>
+        <label class="field">续费日期 <input id="e-renew" type="date" /></label>
+        <label class="field">价格 <input id="e-price" /></label>
+        <label class="field">流量配额 <span class="hint">500GiB，留空不统计</span>
+          <input id="e-quota" placeholder="500GiB / 1TiB / 无限" />
+        </label>
+        <label class="field">计费周期 <span class="hint">天</span>
+          <input id="e-period" type="number" min="0" step="1" placeholder="30" />
+        </label>
       </div>
-      <button type="button" class="btn primary" id="btn-save-edit">保存</button>
+      <label class="field">备注 <input id="e-note" placeholder="备注" /></label>
+      <div class="row">
+        <button type="button" class="btn primary" id="btn-save-edit">保存</button>
+        <button type="button" class="btn ghost" id="btn-cancel-edit">取消</button>
+      </div>
     </div>
   </dialog>
 

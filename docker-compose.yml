@@ -8,14 +8,20 @@ services:
       PORT: "8080"
       DATA_DIR: /data
       ADMIN_USER: "${ADMIN_USER:-admin}"
-      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-changeme}"
-      # Legacy: ADMIN_TOKEN still accepted as password if ADMIN_PASSWORD unset
+      # Required. The hub refuses to start on the built-in "changeme" default, so
+      # an unset ADMIN_PASSWORD is a loud failure, not an open admin API.
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?set ADMIN_PASSWORD in your .env}"
+      # The public origin agents are told to report to. Falls back to the
+      # request's own Host header when unset.
       PUBLIC_URL: "${PUBLIC_URL:-http://localhost:8080}"
       RELEASES_DIR: /app/releases
-      TZ: Asia/Hong_Kong
+      TZ: "${TZ:-Asia/Hong_Kong}"
+      # Bind the admin API to its own port and publish only that one to a
+      # firewall/loopback-restricted rule, e.g. "127.0.0.1:8443:8443".
+      # ADMIN_ADDR: ":8443"
     volumes:
       - tanzhen-data:/data
-      # Optional: mount prebuilt multi-arch agents
+      # Optional: mount prebuilt multi-arch agents over the baked-in set
       # - ./releases:/app/releases:ro
     restart: unless-stopped
 

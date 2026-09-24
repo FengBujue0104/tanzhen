@@ -1,59 +1,151 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # 探针 Tanzhen · Linux 一键扎针
+#
 # 用法:
-#   curl -fsSL 'http://HUB/install.sh?hub=http://HUB&token=TOKEN' | bash
-#   curl -fsSL http://HUB/install.sh | bash -s -- --hub http://HUB --token TOKEN
-set -euo pipefail
+#   curl -fsSL 'http://HUB/install.sh?hub=http://HUB&token=TOKEN' | sh
+#   curl -fsSL http://HUB/install.sh | sh -s -- --hub http://HUB --token TOKEN
+#
+# POSIX sh on purpose: Alpine, OpenWrt and most minimal images ship busybox ash
+# and no bash, so `[[ ]]` and `pipefail` are not available. The hub injects
+# HUB_URL/TOKEN when the query-string form is used.
+set -eu
 
-# May be pre-injected by Hub when using ?hub=&token= query params
 HUB_URL="${HUB_URL:-}"
 TOKEN="${TOKEN:-}"
 VERSION="${TANZHEN_VERSION:-latest}"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 CONFIG_DIR="${CONFIG_DIR:-/etc/tanzhen}"
+TOKEN_FILE="$CONFIG_DIR/token"
+ENV_FILE="$CONFIG_DIR/agent.env"
+LOG_FILE="${LOG_FILE:-/var/log/tanzhen-agent.log}"
 SERVICE_NAME="tanzhen-agent"
+REPO="https://github.com/FengBujue0104/tanzhen"
+UNINSTALL=0
+PURGE=0
 
 usage() {
-  echo "Usage: $0 --hub <HUB_URL> --token <TOKEN>"
-  echo "   or: curl -fsSL 'http://HUB/install.sh?hub=...&token=...' | bash"
+  cat <<EOT
+用法: $0 --hub <HUB_URL> --token <TOKEN>
+或:   curl -fsSL 'http://HUB/install.sh?hub=http://HUB&token=TOKEN' | sh
+
+卸载: ... | sh -s -- --uninstall [--purge]
+  --uninstall  停止并移除探针（保留配置）
+  --purge      连配置目录 $CONFIG_DIR 一起删除
+
+可选环境变量:
+  TANZHEN_VERSION   拉取的版本标签 (默认 latest)
+  TANZHEN_INTERVAL  上报间隔 (默认 2s)
+  TANZHEN_PROBE_EVERY / TANZHEN_PROBE_COUNT  三网探测间隔 / 每次发包数
+  INSTALL_DIR / CONFIG_DIR  安装与配置目录
+EOT
   exit 1
 }
 
-while [[ $# -gt 0 ]]; do
+while [ $# -gt 0 ]; do
   case "$1" in
     --hub) HUB_URL="${2:-}"; shift 2 ;;
     --token) TOKEN="${2:-}"; shift 2 ;;
+    --uninstall) UNINSTALL=1; shift ;;
+    --purge) PURGE=1; shift ;;
     -h|--help) usage ;;
-    *) echo "Unknown arg: $1"; usage ;;
+    *) echo "未知参数: $1" >&2; usage ;;
   esac
 done
 
-HUB_URL="${HUB_URL%/}"
-[[ -n "$HUB_URL" && -n "$TOKEN" ]] || usage
+if [ "$UNINSTALL" != 1 ]; then
+  HUB_URL="${HUB_URL%/}"
+  [ -n "$HUB_URL" ] && [ -n "$TOKEN" ] || usage
+fi
+
+do_uninstall() {
+  log "→ 卸载 Tanzhen Agent"
+  detect_os
+  detect_init
+  case "$INIT" in
+    systemd)
+      systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
+      rm -f "/etc/systemd/system/$SERVICE_NAME.service"
+      systemctl daemon-reload 2>/dev/null || true
+      ;;
+    procd|openrc)
+      if [ -x "/etc/init.d/$SERVICE_NAME" ]; then
+        "/etc/init.d/$SERVICE_NAME" stop 2>/dev/null || true
+        "/etc/init.d/$SERVICE_NAME" disable 2>/dev/null || true
+        rc-update del "$SERVICE_NAME" default 2>/dev/null || true
+        rm -f "/etc/init.d/$SERVICE_NAME"
+      fi
+      ;;
+    *)
+      if [ -f /var/run/tanzhen-agent.pid ]; then
+        kill "$(cat /var/run/tanzhen-agent.pid)" 2>/dev/null || true
+        rm -f /var/run/tanzhen-agent.pid
+      fi
+      ;;
+  esac
+  pkill -f "$INSTALL_DIR/tanzhen-agent" 2>/dev/null || true
+  rm -f "$INSTALL_DIR/tanzhen-agent"
+  rm -f "$LOG_FILE"
+  if [ "$PURGE" = 1 ]; then
+    log "→ 删除配置目录 $CONFIG_DIR（含 Token）"
+    rm -rf "$CONFIG_DIR"
+  else
+    log "→ 保留配置目录 $CONFIG_DIR（加 --purge 可一并删除）"
+  fi
+  log "卸载完成。可在 Hub 管理后台删除该节点。"
+  exit 0
+}
+
+log() { printf '%s\n' "$*"; }
+die() { printf '错误: %s\n' "$*" >&2; exit 1; }
 
 need_root() {
-  if [[ "$(id -u)" -ne 0 ]]; then
-    echo "请使用 root 运行（或 sudo）"
-    exit 1
+  [ "$(id -u)" -eq 0 ] || die "请使用 root 运行（或 sudo）"
+}
+
+# curl or wget, whichever the image happens to ship.
+fetch() {
+  _url="$1"; _dest="$2"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$_url" -o "$_dest"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$_dest" "$_url"
+  else
+    die "需要 curl 或 wget，请先安装其一"
   fi
 }
 
 detect_os() {
   OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
-  ARCH="$(uname -m)"
-  case "$ARCH" in
+  case "$OS" in
+    linux) ;;
+    darwin) log "检测到 macOS，将使用 nohup 方式运行（无 launchd 服务）" ;;
+    *) die "不支持的系统: $OS（Windows 请用 install.ps1）" ;;
+  esac
+  ARCH_RAW="$(uname -m)"
+  case "$ARCH_RAW" in
     x86_64|amd64) ARCH=amd64 ;;
     aarch64|arm64) ARCH=arm64 ;;
-    armv7l) ARCH=arm ;;
-    *) echo "不支持的架构: $ARCH"; exit 1 ;;
+    armv7l|armv6l) ARCH=arm ;;
+    i386|i486|i586|i686) ARCH=386 ;;
+    riscv64) ARCH=riscv64 ;;
+    loongarch64) ARCH=loong64 ;;
+    *) die "不支持的架构: $ARCH_RAW" ;;
   esac
-  [[ "$OS" == "linux" ]] || { echo "此脚本仅支持 Linux"; exit 1; }
 }
 
+# Ordered most-preferred first. A container can have systemctl installed without
+# systemd being PID 1, so /run/systemd/system is the authoritative signal.
 detect_init() {
-  if [[ -d /run/systemd/system ]] || command -v systemctl >/dev/null 2>&1; then
+  if [ "$OS" = "darwin" ]; then
+    # macOS has no systemd; launchd needs a plist in /Library, which is a lot
+    # of surface for a monitor. A supervised nohup is honest and easy to
+    # remove; the agent is crash-only anyway (state lives on the hub).
+    INIT=nohup
+  elif [ -d /run/systemd/system ]; then
     INIT=systemd
-  elif command -v rc-service >/dev/null 2>&1 || [[ -d /etc/init.d ]]; then
+  elif [ -x /sbin/procd ] || command -v procd >/dev/null 2>&1 || [ -f /etc/openwrt_release ]; then
+    INIT=procd
+  elif command -v rc-service >/dev/null 2>&1 || [ -d /etc/init.d ]; then
     INIT=openrc
   else
     INIT=none
@@ -61,126 +153,176 @@ detect_init() {
 }
 
 download_agent() {
-  local url="$HUB_URL/releases/tanzhen-agent-linux-${ARCH}"
-  local dest="$INSTALL_DIR/tanzhen-agent"
+  # Linux and macOS agents are plain GOOS-GOARCH names; Windows is a separate
+  # script (install.ps1), so there is no .exe case here.
+  bin="tanzhen-agent-$OS-$ARCH"
+  url="$HUB_URL/releases/$bin"
   mkdir -p "$INSTALL_DIR"
-  echo "→ 尝试从 Hub 下载: $url"
-  if curl -fsSL "$url" -o "$dest" 2>/dev/null; then
-    chmod +x "$dest"
+  log "→ 从 Hub 下载 agent: $url"
+  if fetch "$url" "$INSTALL_DIR/tanzhen-agent" 2>/dev/null; then
+    chmod 0755 "$INSTALL_DIR/tanzhen-agent"
     return 0
   fi
-  # GitHub releases fallback
-  local gh="https://github.com/FengBujue0104/tanzhen/releases/${VERSION}/download/tanzhen-agent-linux-${ARCH}"
-  echo "→ Hub 无二进制，尝试 GitHub: $gh"
-  if curl -fsSL "$gh" -o "$dest" 2>/dev/null; then
-    chmod +x "$dest"
+  log "→ Hub 未提供二进制，尝试 GitHub Releases"
+  gh="$REPO/releases/$VERSION/download/$bin"
+  if fetch "$gh" "$INSTALL_DIR/tanzhen-agent" 2>/dev/null; then
+    chmod 0755 "$INSTALL_DIR/tanzhen-agent"
     return 0
   fi
-  # Build from source if go available
   if command -v go >/dev/null 2>&1; then
-    echo "→ 使用本地 Go 编译 agent..."
-    local tmp
+    log "→ 使用本地 Go 工具链编译"
     tmp="$(mktemp -d)"
-    if curl -fsSL "https://github.com/FengBujue0104/tanzhen/archive/refs/heads/main.tar.gz" | tar -xz -C "$tmp" --strip-components=1 2>/dev/null; then
-      (cd "$tmp" && CGO_ENABLED=0 go build -ldflags="-s -w" -o "$dest" ./cmd/agent)
-      chmod +x "$dest"
+    if fetch "$REPO/archive/refs/tags/$VERSION.tar.gz" "$tmp/src.tar.gz" 2>/dev/null ||
+       fetch "$REPO/archive/refs/heads/main.tar.gz" "$tmp/src.tar.gz" 2>/dev/null; then
+      tar -xzf "$tmp/src.tar.gz" -C "$tmp" --strip-components=1
+      (cd "$tmp" && CGO_ENABLED=0 GOOS="$OS" GOARCH="$ARCH" go build -trimpath -ldflags="-s -w" \
+        -o "$INSTALL_DIR/tanzhen-agent" ./cmd/agent)
+      chmod 0755 "$INSTALL_DIR/tanzhen-agent"
       rm -rf "$tmp"
       return 0
     fi
     rm -rf "$tmp"
   fi
-  echo "无法获取 agent 二进制。请手动交叉编译后放到 Hub 的 releases/ 或设置 PATH 中的 go。"
-  exit 1
+  die "无法获取 agent 二进制：请把交叉编译好的 $bin 放到 Hub 的 releases/ 目录，或在目标机安装 Go"
 }
 
+# The token goes in its own 0600 file and is passed with --token-file, so it never
+# appears in the process table or in a shell's history line.
 write_config() {
   mkdir -p "$CONFIG_DIR"
-  cat > "$CONFIG_DIR/agent.env" <<EOT
-HUB_URL=$HUB_URL
-TOKEN=$TOKEN
-EOT
-  chmod 600 "$CONFIG_DIR/agent.env"
+  chmod 0700 "$CONFIG_DIR"
+  printf '%s\n' "$TOKEN" > "$TOKEN_FILE"
+  chmod 0600 "$TOKEN_FILE"
+  {
+    printf 'HUB_URL=%s\n' "$HUB_URL"
+    printf 'TANZHEN_INTERVAL=%s\n' "${TANZHEN_INTERVAL:-2s}"
+    printf 'TANZHEN_PROBE_EVERY=%s\n' "${TANZHEN_PROBE_EVERY:-30s}"
+    printf 'TANZHEN_PROBE_COUNT=%s\n' "${TANZHEN_PROBE_COUNT:-4}"
+  } > "$ENV_FILE"
+  chmod 0600 "$ENV_FILE"
+}
+
+agent_cmdline() {
+  # hub URL and tunables on the command line; the secret stays in the file.
+  printf '%s --hub %s --token-file %s' "$INSTALL_DIR/tanzhen-agent" "$HUB_URL" "$TOKEN_FILE"
 }
 
 install_systemd() {
-  cat > /etc/systemd/system/${SERVICE_NAME}.service <<EOT
+  cat > "/etc/systemd/system/$SERVICE_NAME.service" <<EOT
 [Unit]
 Description=Tanzhen monitoring agent
+Documentation=$REPO
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-EnvironmentFile=$CONFIG_DIR/agent.env
-ExecStart=$INSTALL_DIR/tanzhen-agent --hub \${HUB_URL} --token \${TOKEN}
+EnvironmentFile=$ENV_FILE
+ExecStart=$INSTALL_DIR/tanzhen-agent --hub \${HUB_URL} --token-file $TOKEN_FILE --interval \${TANZHEN_INTERVAL} --probe-every \${TANZHEN_PROBE_EVERY} --probe-count \${TANZHEN_PROBE_COUNT}
 Restart=always
 RestartSec=3
 LimitNOFILE=65535
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
 EOT
   systemctl daemon-reload
-  systemctl enable --now ${SERVICE_NAME}
-  echo "✓ systemd 服务已启动: systemctl status ${SERVICE_NAME}"
+  systemctl enable --now "$SERVICE_NAME"
+  log "✓ systemd 服务已启动: systemctl status $SERVICE_NAME"
 }
 
 install_openrc() {
-  cat > /etc/init.d/${SERVICE_NAME} <<EOT
+  cat > "/etc/init.d/$SERVICE_NAME" <<EOT
 #!/sbin/openrc-run
 name="tanzhen-agent"
+description="Tanzhen monitoring agent"
 command="$INSTALL_DIR/tanzhen-agent"
-command_args="--hub \${HUB_URL} --token \${TOKEN}"
+command_args="--hub $HUB_URL --token-file $TOKEN_FILE"
 pidfile="/run/\${RC_SVCNAME}.pid"
 command_background=true
+output_logger="true"
 
 depend() {
   need net
+  after firewall
 }
 
 start_pre() {
-  # shellcheck disable=SC1091
-  . $CONFIG_DIR/agent.env
-  export HUB_URL TOKEN
-  command_args="--hub \${HUB_URL} --token \${TOKEN}"
+  TANZHEN_INTERVAL="\${TANZHEN_INTERVAL:-2s}"
+  TANZHEN_PROBE_EVERY="\${TANZHEN_PROBE_EVERY:-30s}"
+  TANZHEN_PROBE_COUNT="\${TANZHEN_PROBE_COUNT:-4}"
+  command_args="--hub $HUB_URL --token-file $TOKEN_FILE --interval \$TANZHEN_INTERVAL --probe-every \$TANZHEN_PROBE_EVERY --probe-count \$TANZHEN_PROBE_COUNT"
 }
 EOT
-  chmod +x /etc/init.d/${SERVICE_NAME}
-  # openrc env
-  if [[ -d /etc/conf.d ]]; then
-    cat > /etc/conf.d/${SERVICE_NAME} <<EOT
-HUB_URL="$HUB_URL"
-TOKEN="$TOKEN"
-EOT
-  fi
-  rc-update add ${SERVICE_NAME} default 2>/dev/null || true
-  rc-service ${SERVICE_NAME} restart || rc-service ${SERVICE_NAME} start
-  echo "✓ OpenRC 服务已启动"
+  chmod 0755 "/etc/init.d/$SERVICE_NAME"
+  rc-update add "$SERVICE_NAME" default 2>/dev/null || true
+  rc-service "$SERVICE_NAME" restart 2>/dev/null || rc-service "$SERVICE_NAME" start
+  log "✓ OpenRC 服务已启动: rc-service $SERVICE_NAME status"
 }
 
-install_cron_fallback() {
-  echo "未检测到 systemd/OpenRC，使用 nohup 后台运行"
-  pkill -f "$INSTALL_DIR/tanzhen-agent" 2>/dev/null || true
-  # shellcheck disable=SC1090
-  set -a; source "$CONFIG_DIR/agent.env"; set +a
-  nohup "$INSTALL_DIR/tanzhen-agent" --hub "$HUB_URL" --token "$TOKEN" \
-    >/var/log/tanzhen-agent.log 2>&1 &
-  echo "✓ 已后台启动，日志 /var/log/tanzhen-agent.log"
+# OpenWrt's procd: no pidfiles, supervised by init.
+install_procd() {
+  cat > "/etc/init.d/$SERVICE_NAME" <<EOT
+#!/bin/sh /etc/rc.common
+START=99
+USE_PROCD=1
+
+start_service() {
+  procd_open_instance
+  procd_set_param command $INSTALL_DIR/tanzhen-agent --hub $HUB_URL --token-file $TOKEN_FILE --interval \${TANZHEN_INTERVAL:-2s} --probe-every \${TANZHEN_PROBE_EVERY:-30s} --probe-count \${TANZHEN_PROBE_COUNT:-4}
+  procd_set_param respawn
+  procd_set_param stdout 1
+  procd_set_param stderr 1
+  procd_close_instance
+}
+
+stop_service() {
+  :
+}
+
+service_stopped() {
+  echo "$SERVICE_NAME stopped"
+}
+EOT
+  chmod 0755 "/etc/init.d/$SERVICE_NAME"
+  "/etc/init.d/$SERVICE_NAME" enable 2>/dev/null || true
+  "/etc/init.d/$SERVICE_NAME" restart
+  log "✓ procd 服务已启动: /etc/init.d/$SERVICE_NAME status"
+}
+
+# Last resort for containers and exotic init systems: a supervised nohup.
+install_nohup() {
+  log "未检测到 systemd/OpenRC/procd，使用 nohup 后台运行"
+  if [ -f /var/run/tanzhen-agent.pid ]; then
+    kill "$(cat /var/run/tanzhen-agent.pid)" 2>/dev/null || true
+    rm -f /var/run/tanzhen-agent.pid
+  fi
+  TANZHEN_INTERVAL="${TANZHEN_INTERVAL:-2s}" \
+  nohup $INSTALL_DIR/tanzhen-agent --hub "$HUB_URL" --token-file "$TOKEN_FILE" \
+    >>"$LOG_FILE" 2>&1 &
+  echo $! > /var/run/tanzhen-agent.pid
+  log "✓ 已后台运行 (pid $(cat /var/run/tanzhen-agent.pid))，日志 $LOG_FILE"
 }
 
 main() {
+  [ "$UNINSTALL" = 1 ] && do_uninstall
   need_root
   detect_os
   detect_init
-  echo "探针一键扎针 · arch=$ARCH init=$INIT hub=$HUB_URL"
+  log "探针一键扎针 · arch=$ARCH init=$INIT hub=$HUB_URL"
   download_agent
   write_config
   case "$INIT" in
     systemd) install_systemd ;;
-    openrc) install_openrc ;;
-    *) install_cron_fallback ;;
+    procd)   install_procd ;;
+    openrc)  install_openrc ;;
+    *)       install_nohup ;;
   esac
-  echo "完成。在状态页查看节点是否上线。"
+  log "完成。刷新状态页即可看到节点上线。"
 }
 
 main
