@@ -114,9 +114,9 @@ dl() {
 }
 
 # dl_any tries the configured base first and falls back to GitHub Releases.
-# A hub mirror (TANZHEN_BASE_URL=http://HUB/releases/latest/download) only
-# carries what that hub itself was given, so the fallback is what keeps a
-# partially-stocked mirror usable.
+# A hub mirror (TANZHEN_BASE_URL=http://HUB/releases) only carries what that
+# hub itself was given, so the fallback is what keeps a partially-stocked
+# mirror usable.
 GH_BASE="$REPO/releases/$VERSION/download"
 dl_any() {
   # dl_any <filename> <final-dest> <mode>
