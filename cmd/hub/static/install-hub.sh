@@ -1,7 +1,8 @@
 #!/bin/sh
 # 探针 Tanzhen · 主控一键部署
 #
-# 用法:
+# 用法（任选其一，CDN 在国内更稳）:
+#   curl -fsSL https://cdn.jsdelivr.net/gh/FengBujue0104/tanzhen@main/cmd/hub/static/install-hub.sh | sh
 #   curl -fsSL https://raw.githubusercontent.com/FengBujue0104/tanzhen/main/cmd/hub/static/install-hub.sh | sh
 #   curl -fsSL 'http://HUB/install-hub.sh?hub=http://HUB' | sh
 #
@@ -47,7 +48,7 @@ usage() {
   cat <<'EOT'
 探针 Tanzhen · 主控一键部署
 
-  curl -fsSL https://raw.githubusercontent.com/FengBujue0104/tanzhen/main/cmd/hub/static/install-hub.sh | sh
+  curl -fsSL https://cdn.jsdelivr.net/gh/FengBujue0104/tanzhen@main/cmd/hub/static/install-hub.sh | sh
 
 可选: ADMIN_PASSWORD='...' TANZHEN_PORT=8080 PUBLIC_URL=http://IP:8080
 卸载: ... | sh -s -- --uninstall [--purge]
@@ -73,10 +74,14 @@ fi
 
 fetch() {
   _url="$1"; _dest="$2"
+  # Timeouts matter more than they look: on a network that blackholes the
+  # GitHub IPs, an unbounded curl hangs for minutes instead of failing fast
+  # into the mirror fallback. speed-limit catches the nastier case where the
+  # TCP connect succeeds but no data ever flows.
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$_url" -o "$_dest"
+    curl -fsSL --connect-timeout 10 --max-time 600 --speed-time 30 --speed-limit 8192 "$_url" -o "$_dest"
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$_dest" "$_url"
+    wget -q --timeout=10 --tries=2 -O "$_dest" "$_url"
   else
     die "需要 curl 或 wget，请先安装其一"
   fi
@@ -96,9 +101,11 @@ try_fetch() {
 # alternative fails on a root-owned INSTALL_DIR before sudo ever runs.
 dl() {
   # dl <url> <final-dest> <mode>
+  # Callers run in if/|| contexts where set -e is off, so the install result
+  # must be checked explicitly: a swallowed ENOSPC here would surface much
+  # later as a 404 from the hub's /releases/.
   _tmp="$(mktemp)"
-  if try_fetch "$1" "$_tmp"; then
-    $SUDO install -m "$3" "$_tmp" "$2"
+  if try_fetch "$1" "$_tmp" && $SUDO install -m "$3" "$_tmp" "$2"; then
     rm -f "$_tmp"
     return 0
   fi
@@ -139,7 +146,7 @@ detect_init() {
   fi
 }
 
-have_systemd() { [ "$INIT" = systemd ] && command -v systemctl >/dev/null 2>&1; }
+have_systemd() { [ "${INIT:-}" = systemd ] && command -v systemctl >/dev/null 2>&1; }
 
 rand_pass() {
   # 24 url-safe characters from the kernel RNG.
@@ -169,6 +176,7 @@ detect_public_ip() {
 
 do_uninstall() {
   log "→ 卸载 Tanzhen Hub"
+  detect_init
   if have_systemd; then
     $SUDO systemctl disable --now "$SERVICE" 2>/dev/null || true
     $SUDO rm -f "$UNIT_FILE"
@@ -176,7 +184,7 @@ do_uninstall() {
   else
     if [ -f /var/run/tanzhen-hub.pid ]; then
       kill "$(cat /var/run/tanzhen-hub.pid)" 2>/dev/null || true
-      rm -f /var/run/tanzhen-hub.pid
+      $SUDO rm -f /var/run/tanzhen-hub.pid
     fi
   fi
   $SUDO rm -f "$INSTALL_DIR/tanzhen-hub"
@@ -244,11 +252,10 @@ EOT
 
 install_nohup() {
   log "未检测到 systemd，使用 nohup 后台运行"
-  set -a
-  # shellcheck disable=SC1090
-  . "$ENV_FILE"
-  set +a
-  $SUDO sh -c "nohup '$INSTALL_DIR/tanzhen-hub' >>'$LOG_FILE' 2>&1 & echo \$! > /var/run/tanzhen-hub.pid"
+  # The env file is sourced inside the privileged shell, not before it: sudo's
+  # env_reset would drop everything exported here, and the hub would start with
+  # no ADMIN_PASSWORD and the default data dir.
+  $SUDO sh -c "set -a; . '$ENV_FILE'; set +a; nohup '$INSTALL_DIR/tanzhen-hub' >>'$LOG_FILE' 2>&1 & echo \$! > /var/run/tanzhen-hub.pid"
   log "✓ 已后台运行 (pid $(cat /var/run/tanzhen-hub.pid))，日志 $LOG_FILE"
 }
 
@@ -315,7 +322,7 @@ main() {
   else
     if [ -f /var/run/tanzhen-hub.pid ]; then
       kill "$(cat /var/run/tanzhen-hub.pid)" 2>/dev/null || true
-      rm -f /var/run/tanzhen-hub.pid
+      $SUDO rm -f /var/run/tanzhen-hub.pid
     fi
     install_nohup
   fi

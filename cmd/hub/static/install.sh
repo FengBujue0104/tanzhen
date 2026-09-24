@@ -43,8 +43,8 @@ EOT
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --hub) HUB_URL="${2:-}"; shift 2 ;;
-    --token) TOKEN="${2:-}"; shift 2 ;;
+    --hub) [ $# -ge 2 ] || usage; HUB_URL="$2"; shift 2 ;;
+    --token) [ $# -ge 2 ] || usage; TOKEN="$2"; shift 2 ;;
     --uninstall) UNINSTALL=1; shift ;;
     --purge) PURGE=1; shift ;;
     -h|--help) usage ;;
@@ -105,10 +105,12 @@ need_root() {
 # curl or wget, whichever the image happens to ship.
 fetch() {
   _url="$1"; _dest="$2"
+  # Bounded so a blackholed GitHub fails fast into the next source instead of
+  # hanging the installer; speed-limit covers connect-succeeds-but-no-data.
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$_url" -o "$_dest"
+    curl -fsSL --connect-timeout 10 --max-time 600 --speed-time 30 --speed-limit 8192 "$_url" -o "$_dest"
   elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$_dest" "$_url"
+    wget -q --timeout=10 --tries=2 -O "$_dest" "$_url"
   else
     die "需要 curl 或 wget，请先安装其一"
   fi
@@ -252,6 +254,7 @@ depend() {
 }
 
 start_pre() {
+  . '$ENV_FILE' 2>/dev/null || true
   TANZHEN_INTERVAL="\${TANZHEN_INTERVAL:-2s}"
   TANZHEN_PROBE_EVERY="\${TANZHEN_PROBE_EVERY:-30s}"
   TANZHEN_PROBE_COUNT="\${TANZHEN_PROBE_COUNT:-4}"
@@ -272,6 +275,7 @@ START=99
 USE_PROCD=1
 
 start_service() {
+  . '$ENV_FILE' 2>/dev/null || true
   procd_open_instance
   procd_set_param command $INSTALL_DIR/tanzhen-agent --hub $HUB_URL --token-file $TOKEN_FILE --interval \${TANZHEN_INTERVAL:-2s} --probe-every \${TANZHEN_PROBE_EVERY:-30s} --probe-count \${TANZHEN_PROBE_COUNT:-4}
   procd_set_param respawn
@@ -301,16 +305,23 @@ install_nohup() {
     kill "$(cat /var/run/tanzhen-agent.pid)" 2>/dev/null || true
     rm -f /var/run/tanzhen-agent.pid
   fi
-  TANZHEN_INTERVAL="${TANZHEN_INTERVAL:-2s}" \
-  nohup $INSTALL_DIR/tanzhen-agent --hub "$HUB_URL" --token-file "$TOKEN_FILE" \
+  # Source the tunables so this path honors TANZHEN_INTERVAL / PROBE_* exactly
+  # like the systemd unit does — the agent takes them as flags, not env.
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+  nohup "$INSTALL_DIR/tanzhen-agent" --hub "$HUB_URL" --token-file "$TOKEN_FILE" \
+    --interval "${TANZHEN_INTERVAL:-2s}" --probe-every "${TANZHEN_PROBE_EVERY:-30s}" \
+    --probe-count "${TANZHEN_PROBE_COUNT:-4}" \
     >>"$LOG_FILE" 2>&1 &
   echo $! > /var/run/tanzhen-agent.pid
   log "✓ 已后台运行 (pid $(cat /var/run/tanzhen-agent.pid))，日志 $LOG_FILE"
 }
 
 main() {
-  [ "$UNINSTALL" = 1 ] && do_uninstall
   need_root
+  [ "$UNINSTALL" = 1 ] && do_uninstall
   detect_os
   detect_init
   log "探针一键扎针 · arch=$ARCH init=$INIT hub=$HUB_URL"

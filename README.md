@@ -21,7 +21,7 @@
 在要做主控的 VPS 上执行一条命令：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/FengBujue0104/tanzhen/main/cmd/hub/static/install-hub.sh | sh
+curl -fsSL https://cdn.jsdelivr.net/gh/FengBujue0104/tanzhen@main/cmd/hub/static/install-hub.sh | sh
 ```
 
 脚本会自动：检测架构（amd64 / arm64…）→ 下载 Hub 与全部平台 agent 二进制 → 生成管理密码（预置 `ADMIN_PASSWORD='...'` 则用之，否则随机生成并打印一次）→ 推断 `PUBLIC_URL` → 注册 systemd 服务并开机自启 → 探活后打印状态页 / 管理后台地址。无需 Docker、无需 Go、无需克隆仓库。
@@ -280,7 +280,7 @@ go vet ./...
 
 ## English (brief)
 
-Self-hosted Hub + Agent monitor for multiple VPS nodes. Public status page at `/` with sparklines, utilization meters and a table view in both themes; admin UI at `/admin` behind username/password session login (`ADMIN_USER` / `ADMIN_PASSWORD`; the hub refuses to boot on the built-in `changeme` unless `ALLOW_DEFAULT_PASSWORD=1`). Deploy a hub with one command — `curl -fsSL https://raw.githubusercontent.com/FengBujue0104/tanzhen/main/cmd/hub/static/install-hub.sh | sh` — which installs the binary as a systemd service and pre-stages every agent binary; then add nodes from `/admin` with a copy-paste one-liner (`curl '.../install.sh?hub=...&token=...' | sh` on Linux/macOS, `irm '.../install.ps1?...' | iex` on Windows). Both installers support `--uninstall`. Set `ADMIN_ADDR` to bind the admin UI and API to a separate listener. Agents report CPU / memory / swap / disks / network rates / cumulative traffic plus TCP latency and packet loss to the three Chinese carriers. **No remote command execution, no web terminal, no auto-update** — the agent only ever sends data.
+Self-hosted Hub + Agent monitor for multiple VPS nodes. Public status page at `/` with sparklines, utilization meters and a table view in both themes; admin UI at `/admin` behind username/password session login (`ADMIN_USER` / `ADMIN_PASSWORD`; the hub refuses to boot on the built-in `changeme` unless `ALLOW_DEFAULT_PASSWORD=1`). Deploy a hub with one command — `curl -fsSL https://cdn.jsdelivr.net/gh/FengBujue0104/tanzhen@main/cmd/hub/static/install-hub.sh | sh` — which installs the binary as a systemd service and pre-stages every agent binary; then add nodes from `/admin` with a copy-paste one-liner (`curl '.../install.sh?hub=...&token=...' | sh` on Linux/macOS, `irm '.../install.ps1?...' | iex` on Windows). Both installers support `--uninstall`. Set `ADMIN_ADDR` to bind the admin UI and API to a separate listener. Agents report CPU / memory / swap / disks / network rates / cumulative traffic plus TCP latency and packet loss to the three Chinese carriers. **No remote command execution, no web terminal, no auto-update** — the agent only ever sends data.
 
 ```bash
 ADMIN_PASSWORD=strong-secret go run ./cmd/hub
