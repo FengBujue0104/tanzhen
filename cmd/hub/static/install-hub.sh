@@ -188,7 +188,11 @@ do_uninstall() {
     fi
   fi
   $SUDO rm -f "$INSTALL_DIR/tanzhen-hub"
-  $SUDO rm -rf "$CONFIG_DIR"
+  # Only this hub's own env file, never the whole directory: /etc/tanzhen is
+  # shared with the agent install (token, agent.env), and wiping it would stop
+  # the hub from booting after the next reboot — no password, no start.
+  $SUDO rm -f "$ENV_FILE"
+  $SUDO rmdir "$CONFIG_DIR" 2>/dev/null || true
   $SUDO rm -f "$LOG_FILE"
   if [ "$PURGE" = 1 ]; then
     log "→ 删除数据目录 $DATA_DIR（含 SQLite 数据库与 agent 二进制）"

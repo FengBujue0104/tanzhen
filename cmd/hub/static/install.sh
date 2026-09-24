@@ -21,16 +21,14 @@ LOG_FILE="${LOG_FILE:-/var/log/tanzhen-agent.log}"
 SERVICE_NAME="tanzhen-agent"
 REPO="https://github.com/FengBujue0104/tanzhen"
 UNINSTALL=0
-PURGE=0
 
 usage() {
   cat <<EOT
 用法: $0 --hub <HUB_URL> --token <TOKEN>
 或:   curl -fsSL 'http://HUB/install.sh?hub=http://HUB&token=TOKEN' | sh
 
-卸载: ... | sh -s -- --uninstall [--purge]
-  --uninstall  停止并移除探针（保留配置）
-  --purge      连配置目录 $CONFIG_DIR 一起删除
+卸载: ... | sh -s -- --uninstall
+  移除服务、二进制与 token（凭证不残留在盘上）
 
 可选环境变量:
   TANZHEN_VERSION   拉取的版本标签 (默认 latest)
@@ -46,7 +44,6 @@ while [ $# -gt 0 ]; do
     --hub) [ $# -ge 2 ] || usage; HUB_URL="$2"; shift 2 ;;
     --token) [ $# -ge 2 ] || usage; TOKEN="$2"; shift 2 ;;
     --uninstall) UNINSTALL=1; shift ;;
-    --purge) PURGE=1; shift ;;
     -h|--help) usage ;;
     *) echo "未知参数: $1" >&2; usage ;;
   esac
@@ -85,12 +82,11 @@ do_uninstall() {
   pkill -f "$INSTALL_DIR/tanzhen-agent" 2>/dev/null || true
   rm -f "$INSTALL_DIR/tanzhen-agent"
   rm -f "$LOG_FILE"
-  if [ "$PURGE" = 1 ]; then
-    log "→ 删除配置目录 $CONFIG_DIR（含 Token）"
-    rm -rf "$CONFIG_DIR"
-  else
-    log "→ 保留配置目录 $CONFIG_DIR（加 --purge 可一并删除）"
-  fi
+  # Remove only this agent's own files: /etc/tanzhen is shared with a hub
+  # install on the same box, whose env must survive an agent uninstall. The
+  # token is a credential, so it goes on every uninstall, purge or not.
+  rm -f "$TOKEN_FILE" "$ENV_FILE"
+  rmdir "$CONFIG_DIR" 2>/dev/null || true
   log "卸载完成。可在 Hub 管理后台删除该节点。"
   exit 0
 }

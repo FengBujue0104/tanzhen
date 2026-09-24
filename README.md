@@ -13,7 +13,7 @@
 - **状态页**：节点卡片 + 折线图（2 分钟滚动窗口）+ 利用率进度条 + 表格视图，深浅色主题，移动端友好
 - **管理后台**（`/admin`）：用户名 + 密码登录（HTTP-only Session）；节点增删改；创建后立即展示可复制的 Linux / Windows 一键命令
 - **节点元数据（Hub 侧可编辑）**：剩余流量配额、带宽、续费日期、价格、位置、备注
-- **一键卸载**：`--uninstall`（保留数据）/ `--purge`（连数据）
+- **一键卸载**：Hub `--uninstall` / `--purge`（连数据目录）；Agent `--uninstall`（token 作为凭证始终清除）
 - **明确不做**：远程命令执行、Web 终端、自动更新、插件市场 —— 探针只上报，不接受任何远端指令
 
 ## 30 秒部署主控
@@ -148,8 +148,8 @@ curl -fsSL 'http://YOUR_HUB:8080/install.sh?hub=http://YOUR_HUB:8080&token=YOUR_
 # 等价：显式参数
 curl -fsSL http://YOUR_HUB:8080/install.sh | sh -s -- --hub http://YOUR_HUB:8080 --token YOUR_NODE_TOKEN
 
-# 卸载：保留配置 / 连配置（含 token）一起删除
-curl -fsSL http://YOUR_HUB:8080/install.sh | sh -s -- --uninstall [--purge]
+# 卸载（移除服务、二进制与 token；/etc/tanzhen 与 Hub 共享，只会清除探针自身文件）
+curl -fsSL http://YOUR_HUB:8080/install.sh | sh -s -- --uninstall
 ```
 
 脚本会：
