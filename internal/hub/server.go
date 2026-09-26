@@ -405,12 +405,12 @@ func (s *Server) serveInstallSH(w http.ResponseWriter, r *http.Request) {
 	hub := queryOr(r, "hub", s.hubBase(r))
 	tok := strings.TrimSpace(r.URL.Query().Get("token"))
 	if tok != "" {
-		inject := fmt.Sprintf(
-			"# --- injected by hub ---\n"+
-				"if [ -z \"${HUB_URL:-}\" ]; then HUB_URL=%s; fi\n"+
-				"if [ -z \"${TOKEN:-}\" ]; then TOKEN=%s; fi\n",
-			shQuote(hub), shQuote(tok))
-		b = injectAfterShebang(b, inject)
+		var sb strings.Builder
+		sb.WriteString("# --- injected by hub ---\n")
+		fmt.Fprintf(&sb, "if [ -z \"${HUB_URL:-}\" ]; then HUB_URL=%s; fi\n", shQuote(hub))
+		fmt.Fprintf(&sb, "if [ -z \"${TOKEN:-}\" ]; then TOKEN=%s; fi\n", shQuote(tok))
+		appendSHProbeInject(&sb, r)
+		b = injectAfterShebang(b, sb.String())
 	}
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -429,13 +429,14 @@ func (s *Server) serveInstallPS1(w http.ResponseWriter, r *http.Request) {
 
 	var out []byte
 	if tok != "" {
-		// Only the two environment lines are injected. The script's own variables
-		// read them at the top, so there is no appended invocation to drift out
-		// of sync with the script body, and no param() block to collide with.
+		// Environment lines only. The script's own variables read them at the
+		// top, so there is no appended invocation to drift out of sync with the
+		// script body, and no param() block to collide with.
 		var sb strings.Builder
 		sb.WriteString("# --- injected by hub ---\n")
 		fmt.Fprintf(&sb, "$env:TANZHEN_HUB = %s\n", psQuote(hub))
 		fmt.Fprintf(&sb, "$env:TANZHEN_TOKEN = %s\n", psQuote(tok))
+		appendPSProbeInject(&sb, r)
 		sb.WriteString("# --- end inject ---\n\n")
 		sb.Write(b)
 		out = []byte(sb.String())
@@ -446,6 +447,44 @@ func (s *Server) serveInstallPS1(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Content-Security-Policy", cspFor("text/plain"))
 	_, _ = w.Write(out)
+}
+
+
+// appendSHProbeInject writes optional probe tunables from the install URL query
+// into the POSIX installer. Keys: probe_interval, probe_count, probe_provinces,
+// probe_disable. Only assigned when the corresponding env var is unset, so a
+// caller who already exported them keeps their choice.
+func appendSHProbeInject(sb *strings.Builder, r *http.Request) {
+	q := r.URL.Query()
+	if v := strings.TrimSpace(q.Get("probe_interval")); v != "" {
+		fmt.Fprintf(sb, "if [ -z \"${TANZHEN_PROBE_INTERVAL:-}\" ]; then TANZHEN_PROBE_INTERVAL=%s; fi\n", shQuote(v))
+		fmt.Fprintf(sb, "if [ -z \"${TANZHEN_PROBE_EVERY:-}\" ]; then TANZHEN_PROBE_EVERY=%s; fi\n", shQuote(v))
+	}
+	if v := strings.TrimSpace(q.Get("probe_count")); v != "" {
+		fmt.Fprintf(sb, "if [ -z \"${TANZHEN_PROBE_COUNT:-}\" ]; then TANZHEN_PROBE_COUNT=%s; fi\n", shQuote(v))
+	}
+	if v := strings.TrimSpace(q.Get("probe_provinces")); v != "" {
+		fmt.Fprintf(sb, "if [ -z \"${TANZHEN_PROBE_PROVINCES:-}\" ]; then TANZHEN_PROBE_PROVINCES=%s; fi\n", shQuote(v))
+	}
+	if v := strings.TrimSpace(q.Get("probe_disable")); v == "1" || strings.EqualFold(v, "true") {
+		fmt.Fprintf(sb, "if [ -z \"${TANZHEN_PROBE_DISABLE:-}\" ]; then TANZHEN_PROBE_DISABLE=1; fi\n")
+	}
+}
+
+func appendPSProbeInject(sb *strings.Builder, r *http.Request) {
+	q := r.URL.Query()
+	if v := strings.TrimSpace(q.Get("probe_interval")); v != "" {
+		fmt.Fprintf(sb, "if (-not $env:TANZHEN_PROBE_INTERVAL) { $env:TANZHEN_PROBE_INTERVAL = %s }\n", psQuote(v))
+	}
+	if v := strings.TrimSpace(q.Get("probe_count")); v != "" {
+		fmt.Fprintf(sb, "if (-not $env:TANZHEN_PROBE_COUNT) { $env:TANZHEN_PROBE_COUNT = %s }\n", psQuote(v))
+	}
+	if v := strings.TrimSpace(q.Get("probe_provinces")); v != "" {
+		fmt.Fprintf(sb, "if (-not $env:TANZHEN_PROBE_PROVINCES) { $env:TANZHEN_PROBE_PROVINCES = %s }\n", psQuote(v))
+	}
+	if v := strings.TrimSpace(q.Get("probe_disable")); v == "1" || strings.EqualFold(v, "true") {
+		sb.WriteString("if (-not $env:TANZHEN_PROBE_DISABLE) { $env:TANZHEN_PROBE_DISABLE = '1' }\n")
+	}
 }
 
 func shQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }

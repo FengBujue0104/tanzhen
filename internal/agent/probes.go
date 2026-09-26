@@ -19,15 +19,20 @@ import (
 // https://www.nodeseek.com/post-68572-1
 // 文档见 README「三网探测」一节。
 //
-// 可用环境变量覆盖候选主机（逗号分隔），例如：
+// 手动选择（本地 env / flags，无远端指令）：
 //
-//	TANZHEN_PROBE_HOSTS_CT=bj-ct-v4.ip.zstaticcdn.com,sh-ct-v4.ip.zstaticcdn.com
-//	TANZHEN_PROBE_HOSTS_CU=...
-//	TANZHEN_PROBE_HOSTS_CM=...
+//	TANZHEN_PROBE_PROVINCES=bj,sh,gd          # 只测这些省（默认 7 代表省）
+//	TANZHEN_PROBE_HOSTS_CT=host1,host2        # 全量覆盖某运营商候选（优先于省列表）
+//	TANZHEN_PROBE_INTERVAL=60s                # 探测间隔（亦接受 TANZHEN_PROBE_EVERY）
+//	TANZHEN_PROBE_COUNT=4                     # 每运营商每轮样本数
+//	TANZHEN_PROBE_DISABLE=1                   # 完全跳过探测（零流量）
+//
+// DefaultTargets is the package-init snapshot; prefer LoadTargets() at runtime
+// so env set by flags / EnvironmentFile is visible.
 var DefaultTargets = defaultProbeTargets()
 
 // Representative provinces: north / east / south / west / central, kept small
-// so pickHost stays fast on every cache miss.
+// so pickHost stays fast on every cache miss. Override with TANZHEN_PROBE_PROVINCES.
 var defaultProvinces = []string{"bj", "sh", "gd", "js", "zj", "sc", "hb"}
 
 // probePorts is the dial order for TCP-Ping. Prefer :80 (CDN convention from
@@ -58,8 +63,9 @@ func hostsForISP(isp string) []string {
 			return out
 		}
 	}
-	hosts := make([]string, 0, len(defaultProvinces))
-	for _, p := range defaultProvinces {
+	provinces := selectedProvinces()
+	hosts := make([]string, 0, len(provinces))
+	for _, p := range provinces {
 		hosts = append(hosts, fmt.Sprintf("%s-%s-v4.ip.zstaticcdn.com", p, isp))
 	}
 	return hosts
@@ -240,7 +246,7 @@ func tcpPing(host string, port int, timeout time.Duration) (float64, error) {
 // paths, so running them together costs the same wall clock as one.
 func ProbeAll(targets []ProbeTarget, count int) (ct, cu, cm ProbeResult) {
 	if len(targets) == 0 {
-		targets = DefaultTargets
+		targets = LoadTargets()
 	}
 	var wg sync.WaitGroup
 	results := make([]ProbeResult, len(targets))

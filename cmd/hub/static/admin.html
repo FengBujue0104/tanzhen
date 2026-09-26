@@ -85,6 +85,23 @@
         </div>
         <p class="note">在目标机器上执行（需 root / 管理员）。Token 会被写入权限受限的文件，不进入进程列表。</p>
 
+        <div class="probe-opts" id="probe-opts">
+          <p class="note">三网探测（写入安装命令；agent 本地配置，无远端指令）</p>
+          <div class="form-grid">
+            <label class="field">探测间隔 <span class="hint">默认 30s，下限 10s</span>
+              <input id="probe-interval" placeholder="30s" value="30s" />
+            </label>
+            <label class="field">每轮样本数 <span class="hint">每运营商</span>
+              <input id="probe-count" type="number" min="1" step="1" value="4" />
+            </label>
+          </div>
+          <div class="row fit-row" id="probe-prov-row"></div>
+          <div class="row fit-row">
+            <label class="check"><input type="checkbox" id="probe-disable" /> 禁用三网探测（零探测流量）</label>
+            <button type="button" class="btn ghost btn-sm" id="btn-probe-defaults">恢复默认省份</button>
+          </div>
+        </div>
+
         <div class="copy-block">
           <div class="copy-label">
             <span>Linux / macOS 一键扎针</span>

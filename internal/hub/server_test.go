@@ -138,6 +138,23 @@ func TestAdminLoginSessionAndInstallInject(t *testing.T) {
 		t.Fatalf("token not quoted: %s", out)
 	}
 
+	// Optional probe tunables from the one-click URL.
+	rr = do(t, h, "GET", "/install.sh?hub=http://hub.example:8080&token=abc123&probe_interval=60s&probe_count=3&probe_provinces=bj,sh&probe_disable=1", "", nil)
+	if rr.Code != 200 {
+		t.Fatalf("install.sh probe: %d", rr.Code)
+	}
+	out = rr.Body.String()
+	for _, want := range []string{
+		`TANZHEN_PROBE_INTERVAL='60s'`,
+		`TANZHEN_PROBE_COUNT='3'`,
+		`TANZHEN_PROBE_PROVINCES='bj,sh'`,
+		`TANZHEN_PROBE_DISABLE=1`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("probe inject missing %q in: %s", want, out)
+		}
+	}
+
 	// install-hub.sh inject: a fresh hub defaults its PUBLIC_URL to the hub it
 	// was fetched from, and mirrors binaries from it before GitHub.
 	rr = do(t, h, "GET", "/install-hub.sh?hub=http://hub.example:8080", "", nil)
@@ -196,6 +213,22 @@ func TestInstallPS1Inject(t *testing.T) {
 	if got := strings.Count(out, "Install-Tanzhen\n"); got != 1 {
 		t.Fatalf("expected exactly one Install-Tanzhen invocation, got %d: %s", got, out)
 	}
+
+	rr = do(t, h, "GET", "/install.ps1?hub=http://hub.example:8080&token=abc123&probe_interval=60s&probe_provinces=bj,gd&probe_disable=1", "", nil)
+	if rr.Code != 200 {
+		t.Fatalf("install.ps1 probe: %d", rr.Code)
+	}
+	out = rr.Body.String()
+	for _, want := range []string{
+		"$env:TANZHEN_PROBE_INTERVAL = '60s'",
+		"$env:TANZHEN_PROBE_PROVINCES = 'bj,gd'",
+		"$env:TANZHEN_PROBE_DISABLE = '1'",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("ps1 probe inject missing %q in: %s", want, out)
+		}
+	}
+
 	// Injection must land ahead of the body, never inside it.
 	if strings.Index(out, "$env:TANZHEN_HUB") > strings.Index(out, "function Install-Tanzhen") {
 		t.Fatalf("inject placed after the body: %s", out)

@@ -34,7 +34,11 @@ usage() {
 可选环境变量:
   TANZHEN_VERSION   拉取的版本标签 (默认 latest)
   TANZHEN_INTERVAL  上报间隔 (默认 2s)
-  TANZHEN_PROBE_EVERY / TANZHEN_PROBE_COUNT  三网探测间隔 / 每次发包数
+  TANZHEN_PROBE_INTERVAL / TANZHEN_PROBE_EVERY  三网探测间隔 (默认 30s，下限 10s)
+  TANZHEN_PROBE_COUNT       每运营商每轮样本数 (默认 4)
+  TANZHEN_PROBE_PROVINCES   省份代码，逗号分隔，如 bj,sh,gd（默认 7 代表省）
+  TANZHEN_PROBE_DISABLE     设为 1 则跳过三网探测（零探测流量）
+  TANZHEN_PROBE_HOSTS_CT/CU/CM  全量覆盖某运营商候选主机
   INSTALL_DIR / CONFIG_DIR  安装与配置目录（可写前缀即可非 root 安装）
   LOG_FILE / PID_FILE       nohup 日志与 pid
 EOT
@@ -207,11 +211,19 @@ write_config() {
   chmod 0700 "$CONFIG_DIR"
   printf '%s\n' "$TOKEN" > "$TOKEN_FILE"
   chmod 0600 "$TOKEN_FILE"
+  # INTERVAL is the canonical name; EVERY is kept as an alias for older units.
+  _probe_iv="${TANZHEN_PROBE_INTERVAL:-${TANZHEN_PROBE_EVERY:-30s}}"
   {
     printf 'HUB_URL=%s\n' "$HUB_URL"
     printf 'TANZHEN_INTERVAL=%s\n' "${TANZHEN_INTERVAL:-2s}"
-    printf 'TANZHEN_PROBE_EVERY=%s\n' "${TANZHEN_PROBE_EVERY:-30s}"
+    printf 'TANZHEN_PROBE_INTERVAL=%s\n' "$_probe_iv"
+    printf 'TANZHEN_PROBE_EVERY=%s\n' "$_probe_iv"
     printf 'TANZHEN_PROBE_COUNT=%s\n' "${TANZHEN_PROBE_COUNT:-4}"
+    [ -n "${TANZHEN_PROBE_PROVINCES:-}" ] && printf 'TANZHEN_PROBE_PROVINCES=%s\n' "$TANZHEN_PROBE_PROVINCES"
+    [ -n "${TANZHEN_PROBE_DISABLE:-}" ] && printf 'TANZHEN_PROBE_DISABLE=%s\n' "$TANZHEN_PROBE_DISABLE"
+    [ -n "${TANZHEN_PROBE_HOSTS_CT:-}" ] && printf 'TANZHEN_PROBE_HOSTS_CT=%s\n' "$TANZHEN_PROBE_HOSTS_CT"
+    [ -n "${TANZHEN_PROBE_HOSTS_CU:-}" ] && printf 'TANZHEN_PROBE_HOSTS_CU=%s\n' "$TANZHEN_PROBE_HOSTS_CU"
+    [ -n "${TANZHEN_PROBE_HOSTS_CM:-}" ] && printf 'TANZHEN_PROBE_HOSTS_CM=%s\n' "$TANZHEN_PROBE_HOSTS_CM"
   } > "$ENV_FILE"
   chmod 0600 "$ENV_FILE"
 }
@@ -232,7 +244,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=$ENV_FILE
-ExecStart=$INSTALL_DIR/tanzhen-agent --hub \${HUB_URL} --token-file $TOKEN_FILE --interval \${TANZHEN_INTERVAL} --probe-every \${TANZHEN_PROBE_EVERY} --probe-count \${TANZHEN_PROBE_COUNT}
+ExecStart=$INSTALL_DIR/tanzhen-agent --hub \${HUB_URL} --token-file $TOKEN_FILE --interval \${TANZHEN_INTERVAL} --probe-every \${TANZHEN_PROBE_INTERVAL} --probe-count \${TANZHEN_PROBE_COUNT}
 Restart=always
 RestartSec=3
 LimitNOFILE=65535
@@ -266,11 +278,15 @@ depend() {
 }
 
 start_pre() {
+  # Source agent.env into this process so TANZHEN_PROBE_PROVINCES / DISABLE /
+  # HOSTS_* reach the agent via its env defaults (avoids comma-splitting argv).
+  set -a
   . '$ENV_FILE' 2>/dev/null || true
+  set +a
   TANZHEN_INTERVAL="\${TANZHEN_INTERVAL:-2s}"
-  TANZHEN_PROBE_EVERY="\${TANZHEN_PROBE_EVERY:-30s}"
+  TANZHEN_PROBE_INTERVAL="\${TANZHEN_PROBE_INTERVAL:-\${TANZHEN_PROBE_EVERY:-30s}}"
   TANZHEN_PROBE_COUNT="\${TANZHEN_PROBE_COUNT:-4}"
-  command_args="--hub $HUB_URL --token-file $TOKEN_FILE --interval \$TANZHEN_INTERVAL --probe-every \$TANZHEN_PROBE_EVERY --probe-count \$TANZHEN_PROBE_COUNT"
+  command_args="--hub $HUB_URL --token-file $TOKEN_FILE --interval \$TANZHEN_INTERVAL --probe-every \$TANZHEN_PROBE_INTERVAL --probe-count \$TANZHEN_PROBE_COUNT"
 }
 EOT
   chmod 0755 "/etc/init.d/$SERVICE_NAME"
@@ -287,9 +303,20 @@ START=99
 USE_PROCD=1
 
 start_service() {
+  # Export probe env so the agent sees PROVINCES / DISABLE / HOSTS_* without
+  # putting comma-lists on argv (procd_set_param would split them).
+  set -a
   . '$ENV_FILE' 2>/dev/null || true
+  set +a
+  _iv="\${TANZHEN_PROBE_INTERVAL:-\${TANZHEN_PROBE_EVERY:-30s}}"
   procd_open_instance
-  procd_set_param command $INSTALL_DIR/tanzhen-agent --hub $HUB_URL --token-file $TOKEN_FILE --interval \${TANZHEN_INTERVAL:-2s} --probe-every \${TANZHEN_PROBE_EVERY:-30s} --probe-count \${TANZHEN_PROBE_COUNT:-4}
+  procd_set_param command $INSTALL_DIR/tanzhen-agent --hub $HUB_URL --token-file $TOKEN_FILE --interval \${TANZHEN_INTERVAL:-2s} --probe-every \$_iv --probe-count \${TANZHEN_PROBE_COUNT:-4}
+  procd_set_param env HUB_URL="$HUB_URL"
+  [ -n "\${TANZHEN_PROBE_PROVINCES:-}" ] && procd_set_param env TANZHEN_PROBE_PROVINCES="\$TANZHEN_PROBE_PROVINCES"
+  [ -n "\${TANZHEN_PROBE_DISABLE:-}" ] && procd_set_param env TANZHEN_PROBE_DISABLE="\$TANZHEN_PROBE_DISABLE"
+  [ -n "\${TANZHEN_PROBE_HOSTS_CT:-}" ] && procd_set_param env TANZHEN_PROBE_HOSTS_CT="\$TANZHEN_PROBE_HOSTS_CT"
+  [ -n "\${TANZHEN_PROBE_HOSTS_CU:-}" ] && procd_set_param env TANZHEN_PROBE_HOSTS_CU="\$TANZHEN_PROBE_HOSTS_CU"
+  [ -n "\${TANZHEN_PROBE_HOSTS_CM:-}" ] && procd_set_param env TANZHEN_PROBE_HOSTS_CM="\$TANZHEN_PROBE_HOSTS_CM"
   procd_set_param respawn
   procd_set_param stdout 1
   procd_set_param stderr 1
@@ -318,14 +345,18 @@ install_nohup() {
     kill "$(cat "$PID_FILE")" 2>/dev/null || true
     rm -f "$PID_FILE"
   fi
-  # Source the tunables so this path honors TANZHEN_INTERVAL / PROBE_* exactly
-  # like the systemd unit does — the agent takes them as flags, not env.
+  # Source agent.env (set -a) so interval flags and PROVINCES/DISABLE/HOSTS_*
+  # env defaults match the systemd EnvironmentFile path.
   set -a
   # shellcheck disable=SC1090
   . "$ENV_FILE"
   set +a
+  # Sourcing agent.env (above) already exports PROVINCES / DISABLE / HOSTS_*
+  # into this shell; the agent picks them up via env defaults. Only interval /
+  # count stay as flags (same as systemd).
+  _iv="${TANZHEN_PROBE_INTERVAL:-${TANZHEN_PROBE_EVERY:-30s}}"
   nohup "$INSTALL_DIR/tanzhen-agent" --hub "$HUB_URL" --token-file "$TOKEN_FILE" \
-    --interval "${TANZHEN_INTERVAL:-2s}" --probe-every "${TANZHEN_PROBE_EVERY:-30s}" \
+    --interval "${TANZHEN_INTERVAL:-2s}" --probe-every "$_iv" \
     --probe-count "${TANZHEN_PROBE_COUNT:-4}" \
     >>"$LOG_FILE" 2>&1 &
   echo $! > "$PID_FILE"

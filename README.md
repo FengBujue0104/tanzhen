@@ -243,9 +243,40 @@ Agent 对电信 / 联通 / 移动做 **TCP-Ping**（TCP 握手测延迟，**不�
 | 联通 CU | `bj-cu-v4.ip.zstaticcdn.com`, `gd-cu-v4.ip.zstaticcdn.com`, … | 同上 |
 | 移动 CM | `bj-cm-v4.ip.zstaticcdn.com`, `gd-cm-v4.ip.zstaticcdn.com`, … | 同上 |
 
-可用环境变量覆盖候选列表（逗号分隔）：`TANZHEN_PROBE_HOSTS_CT` / `_CU` / `_CM`。
+默认每 **30s** 探测一轮（每运营商 4 个样本），心跳仍按 2s 上报（携带最近一次探测结果）。
 
-默认每 **30s** 探测一轮（每目标 4 次），心跳仍按 2s 上报（携带最近一次探测结果）。
+### 手动选择探测目标与间隔
+
+配置是 **agent 本地** 的（环境变量 / 命令行 flags / 安装时写入的 `agent.env`）。Hub **不会**下发远端指令——这与「探针只上报」的原则一致。管理后台在生成一键安装命令时可勾选省份与间隔，把对应参数嵌进安装 URL；装好后若要改，编辑 `/etc/tanzhen/agent.env`（或 Windows 计划任务参数）并重启服务即可。
+
+| 变量 / flag | 默认 | 说明 |
+|-------------|------|------|
+| `TANZHEN_PROBE_INTERVAL` / `--probe-every` | `30s` | 探测间隔；亦接受旧名 `TANZHEN_PROBE_EVERY`；低于 **10s** 会被钳到 10s |
+| `TANZHEN_PROBE_COUNT` / `--probe-count` | `4` | 每运营商每轮样本数 |
+| `TANZHEN_PROBE_PROVINCES` / `--probe-provinces` | `bj,sh,gd,js,zj,sc,hb` | 逗号分隔省份代码，按模板拼 CDN 主机；只测关心的省可省流量、减少噪声 |
+| `TANZHEN_PROBE_HOSTS_CT` / `_CU` / `_CM` | （无） | 全量覆盖某运营商候选主机（优先于省份列表） |
+| `TANZHEN_PROBE_DISABLE=1` / `--probe-disable` | 关 | 完全跳过三网探测（零探测流量；状态页延迟显示为不可用） |
+
+示例：
+
+```bash
+# 只测北上广，每 60 秒一轮
+TANZHEN_PROBE_PROVINCES=bj,sh,gd TANZHEN_PROBE_INTERVAL=60s \
+  ./tanzhen-agent --hub http://HUB --token-file /etc/tanzhen/token
+
+# 或 flags
+./tanzhen-agent --hub http://HUB --token-file /etc/tanzhen/token \
+  --probe-provinces bj,sh,gd --probe-every 60s --probe-count 3
+
+# 安装时写入（Linux 一键脚本会落到 /etc/tanzhen/agent.env）
+curl -fsSL 'http://HUB/install.sh?hub=...&token=...' \
+  | TANZHEN_PROBE_PROVINCES=bj,gd TANZHEN_PROBE_INTERVAL=60s sh
+
+# 关闭探测
+TANZHEN_PROBE_DISABLE=1 ./tanzhen-agent --hub http://HUB --token-file /etc/tanzhen/token
+```
+
+管理后台：打开节点的「安装命令」面板，勾选省份 / 改间隔后，复制命令即可（参数会进 `install.sh?probe_provinces=...&probe_interval=...`）。
 
 ## 交叉编译
 

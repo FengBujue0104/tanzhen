@@ -21,8 +21,10 @@ $HubUrl     = if ($env:TANZHEN_HUB)     { $env:TANZHEN_HUB.TrimEnd('/') }     el
 $Token      = if ($env:TANZHEN_TOKEN)   { $env:TANZHEN_TOKEN }                else { '' }
 $InstallDir = if ($env:TANZHEN_DIR)     { $env:TANZHEN_DIR }                  elseif ($env:ProgramFiles) { Join-Path $env:ProgramFiles 'Tanzhen' } else { 'C:\Program Files\Tanzhen' }
 $Interval   = if ($env:TANZHEN_INTERVAL) { $env:TANZHEN_INTERVAL }            else { '2s' }
-$ProbeEvery = if ($env:TANZHEN_PROBE_EVERY) { $env:TANZHEN_PROBE_EVERY }      else { '30s' }
+$ProbeEvery = if ($env:TANZHEN_PROBE_INTERVAL) { $env:TANZHEN_PROBE_INTERVAL } elseif ($env:TANZHEN_PROBE_EVERY) { $env:TANZHEN_PROBE_EVERY } else { '30s' }
 $ProbeCount = if ($env:TANZHEN_PROBE_COUNT) { [int]$env:TANZHEN_PROBE_COUNT } else { 4 }
+$ProbeProvinces = if ($env:TANZHEN_PROBE_PROVINCES) { $env:TANZHEN_PROBE_PROVINCES } else { '' }
+$ProbeDisable = $env:TANZHEN_PROBE_DISABLE -in @('1','true','TRUE','yes','YES','on','ON')
 $NoService  = $env:TANZHEN_NO_SERVICE -eq '1'
 
 function Get-AgentArch {
@@ -55,6 +57,8 @@ function Install-Tanzhen {
         [string]$Interval,
         [string]$ProbeEvery,
         [int]$ProbeCount,
+        [string]$ProbeProvinces,
+        [switch]$ProbeDisable,
         [switch]$NoService
     )
 
@@ -85,6 +89,8 @@ function Install-Tanzhen {
     $agentArgs = @('--hub', $HubUrl, '--token-file', $tokenFile,
                    '--interval', $Interval, '--probe-every', $ProbeEvery,
                    '--probe-count', "$ProbeCount")
+    if ($ProbeProvinces) { $agentArgs += @('--probe-provinces', $ProbeProvinces) }
+    if ($ProbeDisable) { $agentArgs += @('--probe-disable') }
 
     if (-not $NoService) {
         $svc = 'TanzhenAgent'
@@ -109,4 +115,5 @@ function Install-Tanzhen {
 }
 
 Install-Tanzhen -HubUrl $HubUrl -Token $Token -Dir $InstallDir `
-    -Interval $Interval -ProbeEvery $ProbeEvery -ProbeCount $ProbeCount -NoService:$NoService
+    -Interval $Interval -ProbeEvery $ProbeEvery -ProbeCount $ProbeCount `
+    -ProbeProvinces $ProbeProvinces -ProbeDisable:$ProbeDisable -NoService:$NoService

@@ -152,3 +152,113 @@ func TestHostCacheHit(t *testing.T) {
 		t.Fatalf("cache miss: got %q", got)
 	}
 }
+
+func TestSelectedProvincesEnv(t *testing.T) {
+	t.Setenv("TANZHEN_PROBE_PROVINCES", " BJ, sh ,gd,bj, bad!, ")
+	t.Setenv("TANZHEN_PROBE_HOSTS_CT", "")
+	got := selectedProvinces()
+	want := []string{"bj", "sh", "gd"}
+	if len(got) != len(want) {
+		t.Fatalf("selectedProvinces=%v want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("selectedProvinces=%v want %v", got, want)
+		}
+	}
+	h := hostsForISP("ct")
+	if len(h) != 3 || h[0] != "bj-ct-v4.ip.zstaticcdn.com" || h[2] != "gd-ct-v4.ip.zstaticcdn.com" {
+		t.Fatalf("hosts from provinces=%v", h)
+	}
+}
+
+func TestSelectedProvincesEmptyFallsBack(t *testing.T) {
+	t.Setenv("TANZHEN_PROBE_PROVINCES", " , !!, ")
+	got := selectedProvinces()
+	if len(got) != len(defaultProvinces) {
+		t.Fatalf("fallback want %d got %v", len(defaultProvinces), got)
+	}
+}
+
+func TestHostsOverrideBeatsProvinces(t *testing.T) {
+	t.Setenv("TANZHEN_PROBE_PROVINCES", "bj,sh")
+	t.Setenv("TANZHEN_PROBE_HOSTS_CT", "custom.example")
+	got := hostsForISP("ct")
+	if len(got) != 1 || got[0] != "custom.example" {
+		t.Fatalf("HOSTS override lost: %v", got)
+	}
+}
+
+func TestProbeDisabled(t *testing.T) {
+	t.Setenv("TANZHEN_PROBE_DISABLE", "")
+	if ProbeDisabled() {
+		t.Fatal("empty should be false")
+	}
+	t.Setenv("TANZHEN_PROBE_DISABLE", "1")
+	if !ProbeDisabled() {
+		t.Fatal("1 should disable")
+	}
+	t.Setenv("TANZHEN_PROBE_DISABLE", "YES")
+	if !ProbeDisabled() {
+		t.Fatal("YES should disable")
+	}
+}
+
+func TestProbeIntervalFromEnv(t *testing.T) {
+	t.Setenv("TANZHEN_PROBE_INTERVAL", "")
+	t.Setenv("TANZHEN_PROBE_EVERY", "")
+	if got := ProbeIntervalFromEnv(DefaultProbeInterval); got != DefaultProbeInterval {
+		t.Fatalf("default=%v", got)
+	}
+	t.Setenv("TANZHEN_PROBE_EVERY", "45s")
+	if got := ProbeIntervalFromEnv(DefaultProbeInterval); got != 45*time.Second {
+		t.Fatalf("EVERY alias=%v", got)
+	}
+	t.Setenv("TANZHEN_PROBE_INTERVAL", "90s")
+	if got := ProbeIntervalFromEnv(DefaultProbeInterval); got != 90*time.Second {
+		t.Fatalf("INTERVAL preferred=%v", got)
+	}
+}
+
+func TestProbeCountFromEnv(t *testing.T) {
+	t.Setenv("TANZHEN_PROBE_COUNT", "")
+	if ProbeCountFromEnv(4) != 4 {
+		t.Fatal("default")
+	}
+	t.Setenv("TANZHEN_PROBE_COUNT", "8")
+	if ProbeCountFromEnv(4) != 8 {
+		t.Fatal("count 8")
+	}
+	t.Setenv("TANZHEN_PROBE_COUNT", "0")
+	if ProbeCountFromEnv(4) != 4 {
+		t.Fatal("zero invalid")
+	}
+}
+
+func TestClampProbeInterval(t *testing.T) {
+	if ClampProbeInterval(5*time.Second) != MinProbeInterval {
+		t.Fatal("should clamp below floor")
+	}
+	if ClampProbeInterval(60*time.Second) != 60*time.Second {
+		t.Fatal("should keep above floor")
+	}
+	if ClampProbeInterval(0) != 0 {
+		t.Fatal("zero stays zero")
+	}
+}
+
+func TestLoadTargetsHonorsProvinces(t *testing.T) {
+	t.Setenv("TANZHEN_PROBE_PROVINCES", "zj")
+	t.Setenv("TANZHEN_PROBE_HOSTS_CT", "")
+	t.Setenv("TANZHEN_PROBE_HOSTS_CU", "")
+	t.Setenv("TANZHEN_PROBE_HOSTS_CM", "")
+	ts := LoadTargets()
+	if len(ts) != 3 {
+		t.Fatalf("want 3 ISPs, got %d", len(ts))
+	}
+	for _, tgt := range ts {
+		if len(tgt.Hosts) != 1 || !strings.HasPrefix(tgt.Hosts[0], "zj-") {
+			t.Fatalf("%s hosts=%v", tgt.ISP, tgt.Hosts)
+		}
+	}
+}

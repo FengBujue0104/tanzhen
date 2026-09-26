@@ -148,6 +148,18 @@
   $("#btn-refresh").onclick = () => loadAdmin();
   $("#btn-close-install").onclick = () => installPanel.classList.add("hidden");
   $("#btn-cancel-edit").onclick = () => editDlg.close();
+  $("#btn-probe-defaults").onclick = () => resetProbeDefaults();
+  ["probe-interval", "probe-count", "probe-disable"].forEach((id) => {
+    const node = $("#" + id);
+    if (!node) return;
+    node.addEventListener("change", () => { if (installInfo) renderInstallCmds(installInfo); });
+    node.addEventListener("input", () => { if (installInfo) renderInstallCmds(installInfo); });
+  });
+  // Province checkboxes are created lazily; delegate from the row.
+  const provRow = $("#probe-prov-row");
+  if (provRow) {
+    provRow.addEventListener("change", () => { if (installInfo) renderInstallCmds(installInfo); });
+  }
 
   /* -------------------------------------------------------------- node list -- */
 
@@ -249,21 +261,121 @@
 
   /* ------------------------------------------------------------ install cmd -- */
 
-  function showInstall(info) {
-    $("#install-title").textContent = "一键安装 · " + (info.name || "");
-    $("#linux-cmd").textContent = info.install_cmd || "";
-    $("#win-cmd").textContent = info.win_cmd || "";
+  /* Default representative provinces — keep in sync with agent defaultProvinces. */
+  const PROBE_PROVINCES = [
+    { code: "bj", label: "北京" },
+    { code: "sh", label: "上海" },
+    { code: "gd", label: "广东" },
+    { code: "js", label: "江苏" },
+    { code: "zj", label: "浙江" },
+    { code: "sc", label: "四川" },
+    { code: "hb", label: "湖北" },
+  ];
+
+  let installInfo = null;
+
+  function ensureProbeProvinceChecks() {
+    const row = $("#probe-prov-row");
+    if (!row || row.dataset.ready === "1") return;
+    row.appendChild(el("span", "muted", "探测省份"));
+    for (const p of PROBE_PROVINCES) {
+      const lab = el("label", "check");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.value = p.code;
+      cb.checked = true;
+      cb.dataset.probeProv = p.code;
+      lab.appendChild(cb);
+      lab.appendChild(document.createTextNode(" " + p.label + " (" + p.code + ")"));
+      row.appendChild(lab);
+    }
+    row.dataset.ready = "1";
+  }
+
+  function selectedProbeProvinces() {
+    ensureProbeProvinceChecks();
+    return Array.from(document.querySelectorAll("[data-probe-prov]"))
+      .filter((cb) => cb.checked)
+      .map((cb) => cb.value);
+  }
+
+  function resetProbeDefaults() {
+    ensureProbeProvinceChecks();
+    $("#probe-interval").value = "30s";
+    $("#probe-count").value = "4";
+    $("#probe-disable").checked = false;
+    document.querySelectorAll("[data-probe-prov]").forEach((cb) => { cb.checked = true; });
+    if (installInfo) renderInstallCmds(installInfo);
+  }
+
+  function probeQueryParams() {
+    const q = {};
+    if ($("#probe-disable").checked) {
+      q.probe_disable = "1";
+      return q;
+    }
+    const iv = ($("#probe-interval").value || "").trim();
+    if (iv && iv !== "30s") q.probe_interval = iv;
+    const count = parseInt($("#probe-count").value, 10);
+    if (isFinite(count) && count > 0 && count !== 4) q.probe_count = String(count);
+    const selected = selectedProbeProvinces();
+    const allCodes = PROBE_PROVINCES.map((p) => p.code);
+    const isDefault =
+      selected.length === allCodes.length &&
+      allCodes.every((c) => selected.includes(c));
+    if (selected.length && !isDefault) q.probe_provinces = selected.join(",");
+    return q;
+  }
+
+  function withProbeQuery(url, params) {
+    if (!url || !params || !Object.keys(params).length) return url;
+    const u = new URL(url, location.origin);
+    for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
+    // Prefer the absolute form from the hub when the input was absolute.
+    if (/^https?:\/\//i.test(url)) return u.toString();
+    return u.pathname + u.search + u.hash;
+  }
+
+  function renderInstallCmds(info) {
+    ensureProbeProvinceChecks();
+    const params = probeQueryParams();
+    const linuxURL = withProbeQuery(info.install_url || "", params);
+    const winURL = withProbeQuery(info.win_url || "", params);
+    const linuxCmd = linuxURL
+      ? "curl -fsSL '" + linuxURL + "' | sh"
+      : (info.install_cmd || "");
+    const winCmd = winURL
+      ? "irm '" + winURL + "' | iex"
+      : (info.win_cmd || "");
+    $("#linux-cmd").textContent = linuxCmd;
+    $("#win-cmd").textContent = winCmd;
     $("#node-token").textContent = info.token || "";
 
-    // The one-command form has to carry the token in the URL. Offer the
-    // equivalent form that keeps it out of the URL too, for anyone who would
-    // rather not paste a secret into a shell.
     const hub = String(info.hub_url || "").replace(/\/+$/, "");
     const tok = info.token || "";
-    $("#linux-url").textContent =
+    let envExports =
       "export HUB_URL=" + shQuote(hub) + "\n" +
-      "export TOKEN=" + shQuote(tok) + "\n" +
-      "curl -fsSL \"$HUB_URL/install.sh\" | sh";
+      "export TOKEN=" + shQuote(tok) + "\n";
+    if (params.probe_interval) {
+      envExports += "export TANZHEN_PROBE_INTERVAL=" + shQuote(params.probe_interval) + "\n";
+    }
+    if (params.probe_count) {
+      envExports += "export TANZHEN_PROBE_COUNT=" + shQuote(params.probe_count) + "\n";
+    }
+    if (params.probe_provinces) {
+      envExports += "export TANZHEN_PROBE_PROVINCES=" + shQuote(params.probe_provinces) + "\n";
+    }
+    if (params.probe_disable) {
+      envExports += "export TANZHEN_PROBE_DISABLE=1\n";
+    }
+    $("#linux-url").textContent = envExports + "curl -fsSL \"$HUB_URL/install.sh\" | sh";
+  }
+
+  function showInstall(info) {
+    installInfo = info || null;
+    $("#install-title").textContent = "一键安装 · " + ((info && info.name) || "");
+    ensureProbeProvinceChecks();
+    renderInstallCmds(info || {});
     installPanel.classList.remove("hidden");
     installPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }

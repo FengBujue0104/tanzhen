@@ -1195,3 +1195,15 @@ body.has-custom-bg .tableview {
   color: var(--ink-2);
   font-size: 0.78rem;
 }
+
+/* Admin: probe target / interval picker on the install panel */
+.probe-opts {
+  margin: 0.75rem 0 1rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--surface) 88%, transparent);
+}
+.probe-opts .note { margin-top: 0; }
+.probe-opts .fit-row { margin-top: 0.55rem; }
+.probe-opts .check { font-size: 0.82rem; }
