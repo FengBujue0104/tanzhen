@@ -1,5 +1,5 @@
 #!/bin/sh
-# 探针 Tanzhen · Linux 一键扎针
+# 探针 Tanzhen · Linux / macOS 一键扎针
 #
 # 用法:
 #   curl -fsSL 'http://HUB/install.sh?hub=http://HUB&token=TOKEN' | sh
@@ -20,6 +20,8 @@ ENV_FILE="$CONFIG_DIR/agent.env"
 LOG_FILE="${LOG_FILE:-/var/log/tanzhen-agent.log}"
 PID_FILE="${PID_FILE:-/var/run/tanzhen-agent.pid}"
 SERVICE_NAME="tanzhen-agent"
+LAUNCHD_LABEL="com.tanzhen.agent"
+LAUNCHD_PLIST="/Library/LaunchDaemons/com.tanzhen.agent.plist"
 REPO="https://github.com/FengBujue0104/tanzhen"
 UNINSTALL=0
 
@@ -40,7 +42,8 @@ usage() {
   TANZHEN_PROBE_DISABLE     设为 1 则跳过三网探测（零探测流量）
   TANZHEN_PROBE_HOSTS_CT/CU/CM  全量覆盖某运营商候选主机
   INSTALL_DIR / CONFIG_DIR  安装与配置目录（可写前缀即可非 root 安装）
-  LOG_FILE / PID_FILE       nohup 日志与 pid
+  LOG_FILE / PID_FILE       nohup / launchd 日志与 pid
+  FORCE_NOHUP=1             macOS 下跳过 launchd，强制 nohup
 EOT
   exit 1
 }
@@ -64,6 +67,7 @@ do_uninstall() {
   log "→ 卸载 Tanzhen Agent"
   detect_os
   detect_init
+  remove_launchd_if_present
   case "$INIT" in
     systemd)
       systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
@@ -77,6 +81,8 @@ do_uninstall() {
         rc-update del "$SERVICE_NAME" default 2>/dev/null || true
         rm -f "/etc/init.d/$SERVICE_NAME"
       fi
+      ;;
+    launchd)
       ;;
     *)
       if [ -f "$PID_FILE" ]; then
@@ -131,7 +137,7 @@ detect_os() {
   OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
   case "$OS" in
     linux) ;;
-    darwin) log "检测到 macOS，将使用 nohup 方式运行（无 launchd 服务）" ;;
+    darwin) log "检测到 macOS" ;;
     *) die "不支持的系统: $OS（Windows 请用 install.ps1）" ;;
   esac
   ARCH_RAW="$(uname -m)"
@@ -155,10 +161,13 @@ detect_init() {
     return
   fi
   if [ "$OS" = "darwin" ]; then
-    # macOS has no systemd; launchd needs a plist in /Library, which is a lot
-    # of surface for a monitor. A supervised nohup is honest and easy to
-    # remove; the agent is crash-only anyway (state lives on the hub).
-    INIT=nohup
+    # Root LaunchDaemon; non-root already returned nohup above. FORCE_NOHUP=1
+    # or a missing launchctl keeps the old supervised-nohup path.
+    if [ "${FORCE_NOHUP:-}" = 1 ] || ! command -v launchctl >/dev/null 2>&1; then
+      INIT=nohup
+    else
+      INIT=launchd
+    fi
   elif [ -d /run/systemd/system ]; then
     INIT=systemd
   elif [ -x /sbin/procd ] || command -v procd >/dev/null 2>&1 || [ -f /etc/openwrt_release ]; then
@@ -168,6 +177,24 @@ detect_init() {
   else
     INIT=none
   fi
+}
+
+# XML text escaping for the LaunchDaemon plist (hub URLs may contain &).
+xml_esc() {
+  printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'
+}
+
+# Always scoped to this agent's plist. Safe to call on Linux / non-root:
+# missing file or denied unlink is ignored.
+remove_launchd_if_present() {
+  if [ ! -f "$LAUNCHD_PLIST" ]; then
+    return 0
+  fi
+  log "→ 卸载 launchd $LAUNCHD_PLIST"
+  launchctl bootout system "$LAUNCHD_PLIST" 2>/dev/null || \
+    launchctl bootout "system/$LAUNCHD_LABEL" 2>/dev/null || \
+    launchctl unload -w "$LAUNCHD_PLIST" 2>/dev/null || true
+  rm -f "$LAUNCHD_PLIST" 2>/dev/null || true
 }
 
 download_agent() {
@@ -337,9 +364,104 @@ EOT
   log "✓ procd 服务已启动: /etc/init.d/$SERVICE_NAME status"
 }
 
-# Last resort for containers and exotic init systems: a supervised nohup.
+# macOS LaunchDaemon: KeepAlive + RunAtLoad, logs to LOG_FILE. Load failure
+# (or an older launchctl) falls back to nohup and says so.
+install_launchd() {
+  _iv="${TANZHEN_PROBE_INTERVAL:-${TANZHEN_PROBE_EVERY:-30s}}"
+  _interval="${TANZHEN_INTERVAL:-2s}"
+  _count="${TANZHEN_PROBE_COUNT:-4}"
+  mkdir -p "$(dirname "$LOG_FILE")"
+  # Replacing a previous nohup install of the same binary.
+  if [ -f "$PID_FILE" ]; then
+    kill "$(cat "$PID_FILE")" 2>/dev/null || true
+    rm -f "$PID_FILE"
+  fi
+  launchctl bootout system "$LAUNCHD_PLIST" 2>/dev/null || \
+    launchctl bootout "system/$LAUNCHD_LABEL" 2>/dev/null || \
+    launchctl unload -w "$LAUNCHD_PLIST" 2>/dev/null || true
+
+  _env=""
+  _add_env() {
+    [ -n "${2:-}" ] || return 0
+    _env="${_env}    <key>$(xml_esc "$1")</key>
+    <string>$(xml_esc "$2")</string>
+"
+  }
+  _add_env HUB_URL "$HUB_URL"
+  _add_env TANZHEN_INTERVAL "$_interval"
+  _add_env TANZHEN_PROBE_INTERVAL "$_iv"
+  _add_env TANZHEN_PROBE_EVERY "$_iv"
+  _add_env TANZHEN_PROBE_COUNT "$_count"
+  _add_env TANZHEN_PROBE_PROVINCES "${TANZHEN_PROBE_PROVINCES:-}"
+  _add_env TANZHEN_PROBE_DISABLE "${TANZHEN_PROBE_DISABLE:-}"
+  _add_env TANZHEN_PROBE_HOSTS_CT "${TANZHEN_PROBE_HOSTS_CT:-}"
+  _add_env TANZHEN_PROBE_HOSTS_CU "${TANZHEN_PROBE_HOSTS_CU:-}"
+  _add_env TANZHEN_PROBE_HOSTS_CM "${TANZHEN_PROBE_HOSTS_CM:-}"
+
+  cat > "$LAUNCHD_PLIST" <<EOT
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$LAUNCHD_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$(xml_esc "$INSTALL_DIR/tanzhen-agent")</string>
+    <string>--hub</string>
+    <string>$(xml_esc "$HUB_URL")</string>
+    <string>--token-file</string>
+    <string>$(xml_esc "$TOKEN_FILE")</string>
+    <string>--interval</string>
+    <string>$(xml_esc "$_interval")</string>
+    <string>--probe-every</string>
+    <string>$(xml_esc "$_iv")</string>
+    <string>--probe-count</string>
+    <string>$(xml_esc "$_count")</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+$_env  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>$(xml_esc "$LOG_FILE")</string>
+  <key>StandardErrorPath</key>
+  <string>$(xml_esc "$LOG_FILE")</string>
+</dict>
+</plist>
+EOT
+  chmod 0644 "$LAUNCHD_PLIST"
+
+  if launchctl bootstrap system "$LAUNCHD_PLIST" 2>/dev/null || \
+     launchctl load -w "$LAUNCHD_PLIST" 2>/dev/null; then
+    log "✓ launchd 已加载: $LAUNCHD_PLIST （launchctl print system/$LAUNCHD_LABEL）"
+    log "  日志 $LOG_FILE"
+  else
+    log "launchd 加载失败，回退 nohup（可设 FORCE_NOHUP=1 跳过 launchd）"
+    rm -f "$LAUNCHD_PLIST" 2>/dev/null || true
+    install_nohup
+  fi
+}
+
+# Last resort for containers, exotic init, non-root, FORCE_NOHUP=1, and
+# launchd load failure: a supervised nohup.
 install_nohup() {
-  log "未检测到 systemd/OpenRC/procd，使用 nohup 后台运行"
+  case "${OS:-}" in
+    darwin)
+      if [ "${FORCE_NOHUP:-}" = 1 ]; then
+        log "FORCE_NOHUP=1，使用 nohup 后台运行"
+      else
+        log "使用 nohup 后台运行"
+      fi
+      remove_launchd_if_present
+      ;;
+    *)
+      log "未检测到 systemd/OpenRC/procd，使用 nohup 后台运行"
+      ;;
+  esac
   mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$PID_FILE")"
   if [ -f "$PID_FILE" ]; then
     kill "$(cat "$PID_FILE")" 2>/dev/null || true
@@ -375,6 +497,7 @@ main() {
     systemd) install_systemd ;;
     procd)   install_procd ;;
     openrc)  install_openrc ;;
+    launchd) install_launchd ;;
     *)       install_nohup ;;
   esac
   log "完成。刷新状态页即可看到节点上线。"

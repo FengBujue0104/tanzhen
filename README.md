@@ -253,10 +253,10 @@ curl -fsSL 'http://HUB/install.sh?hub=...&token=...' | INSTALL_DIR=$HOME/tz/bin 
 
 脚本会：
 
-1. 检测系统与架构：`linux` / `darwin`（macOS 走 nohup 兜底，无 launchd 服务）；`amd64` / `arm64` / `arm` / `386` / `riscv64` / `loong64`
+1. 检测系统与架构：`linux` / `darwin`；`amd64` / `arm64` / `arm` / `386` / `riscv64` / `loong64`。macOS 以 root 安装时写入 LaunchDaemon（`/Library/LaunchDaemons/com.tanzhen.agent.plist`）；非 root、`FORCE_NOHUP=1` 或 launchd 加载失败则回退 nohup
 2. 从 Hub `/releases/`（或 GitHub Releases）下载对应 agent
 3. 把 token 写入 `/etc/tanzhen/token`（`0600`），**不走命令行参数** —— 避免泄露进 `/proc/cmdline` 与 `ps` 输出
-4. 注册服务，按检测顺序：**systemd** → **procd**（OpenWrt） → **OpenRC**（Alpine） → 都不具备时用 `nohup` 兜底
+4. 注册服务，按检测顺序：**systemd** → **procd**（OpenWrt） → **OpenRC**（Alpine） → **launchd**（macOS root） → 都不具备时用 `nohup` 兜底
 5. 启动并打印状态
 
 脚本是 POSIX sh，Alpine 的 busybox ash 也能直接跑：没有 `[[ ]]`、没有 `pipefail`。
@@ -266,6 +266,13 @@ curl -fsSL 'http://HUB/install.sh?hub=...&token=...' | INSTALL_DIR=$HOME/tz/bin 
 ```bash
 ./scripts/build.sh
 ```
+
+### macOS launchd
+
+- root 安装：生成并 `bootstrap` LaunchDaemon `com.tanzhen.agent`，`KeepAlive` + `RunAtLoad`，日志默认 `/var/log/tanzhen-agent.log`
+- 查看：`sudo launchctl print system/com.tanzhen.agent`
+- 强制 nohup：`FORCE_NOHUP=1` 再跑安装脚本
+- 卸载：`curl -fsSL http://HUB/install.sh | sh -s -- --uninstall`（会 unload 并删除 plist）
 
 ## Windows Agent
 
@@ -280,7 +287,18 @@ $env:TANZHEN_HUB='http://YOUR_HUB:8080'; $env:TANZHEN_TOKEN='YOUR_NODE_TOKEN'
 irm 'http://YOUR_HUB:8080/install.ps1' | iex
 ```
 
-脚本会固定 TLS 1.2+（PowerShell 5.1 默认协商 TLS 1.0，多数 CDN 已拒绝）、把 token 写入 ACL 收紧的文件、以 `--token-file` 启动 agent，并注册开机自启的计划任务 `TanzhenAgent`（失败重启 999 次）。
+脚本会固定 TLS 1.2+（PowerShell 5.1 默认协商 TLS 1.0，多数 CDN 已拒绝）、把 token 写入 ACL 收紧的文件、以 `--token-file` 启动 agent，并注册开机自启的**计划任务** `TanzhenAgent`（失败重启 999 次）。这是 Scheduled Task，不是经典 SCM Windows Service；需要**管理员** PowerShell，否则注册会失败。
+
+常用排查：
+
+```powershell
+Get-ScheduledTask -TaskName TanzhenAgent
+Get-ScheduledTaskInfo -TaskName TanzhenAgent
+# 卸载：先停任务再删目录（脚本重装时会 Unregister 同名任务）
+Unregister-ScheduledTask -TaskName TanzhenAgent -Confirm:$false
+```
+
+设 `TANZHEN_NO_SERVICE=1` 可只装二进制不注册计划任务。
 
 或手动：
 
