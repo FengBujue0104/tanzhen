@@ -83,7 +83,7 @@
           <h2 id="install-title">一键安装</h2>
           <button type="button" class="btn ghost icon" id="btn-close-install" aria-label="关闭">✕</button>
         </div>
-        <p class="note">在目标机器上执行（需 root / 管理员）。Token 会被写入权限受限的文件，不进入进程列表。</p>
+        <p class="note">在目标机器上执行（需 root / 管理员）。Token 写入权限受限的文件，不进进程列表。带 ?token= 的安装地址会进入反向代理访问日志。这条命令复制一次即可；或用下方两步形式，先下载脚本，再以环境变量传入 token。</p>
 
         <div class="probe-opts" id="probe-opts">
           <p class="note">三网探测（写入安装命令；agent 本地配置，无远端指令）</p>
@@ -120,15 +120,15 @@
 
         <div class="copy-block">
           <div class="copy-label">
-            <span>安装脚本 URL</span>
-            <button type="button" class="btn ghost btn-sm" data-copy="linux-url">复制 URL</button>
+            <span>两步安装（token 以环境变量传入）</span>
+            <button type="button" class="btn ghost btn-sm" data-copy="linux-url">复制</button>
           </div>
           <pre id="linux-url" class="code"></pre>
         </div>
 
         <div class="copy-block">
           <div class="copy-label">
-            <span>Token <span class="dim">（仅显示一次，请妥善保存）</span></span>
+            <span>Token <span class="dim">（妥善保管；可随时在节点详情重新查看安装命令）</span></span>
             <button type="button" class="btn ghost btn-sm" data-copy="node-token">复制</button>
           </div>
           <pre id="node-token" class="code"></pre>

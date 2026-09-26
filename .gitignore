@@ -1,4 +1,5 @@
 /data/
+/backups/
 /dist/
 /releases/
 *.db

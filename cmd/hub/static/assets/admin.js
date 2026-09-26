@@ -1,8 +1,10 @@
 /* 探针 Tanzhen — admin console.
 
   The console is a separate app on the same stylesheet. It creates nodes, edits
-  their subscription metadata, and hands out the one-command installer; the
-  token is shown once and written to a permission-restricted file on the target.
+  their subscription metadata, and hands out the one-command installer. The
+  node token can be shown again from this panel (GET /api/admin/nodes/{id}/install)
+  and is written to a permission-restricted file on the target. Install URLs
+  that carry ?token= are stored in reverse-proxy access logs.
  */
 (() => {
   "use strict";

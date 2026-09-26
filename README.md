@@ -107,6 +107,85 @@ docker compose up -d --build
 
 `ADMIN_PASSWORD` 在 `docker-compose.yml` 里写作 `${ADMIN_PASSWORD:?...}`，省略时 compose 会直接报错 —— 这是有意的：用内置默认密码启动等于开放一个无鉴权的管理 API。
 
+HTTPS 反代见下一节。容器里管理面要单独隔离时，`ADMIN_ADDR` 监听容器内所有接口（`:8443`），由宿主机只把端口绑到回环：`127.0.0.1:8443:8443`。
+
+## 反向代理与 HTTPS
+
+Hub 监听明文 HTTP，TLS 在 Caddy 或 nginx 上终止。一键安装的环境文件是 `/etc/tanzhen/hub.env`（改完 `systemctl restart tanzhen-hub`）；Docker 写在 compose 的 `environment` 里：
+
+```sh
+PUBLIC_URL=https://tz.example.com   # 对外源站：安装链接与探针上报都指向它
+COOKIE_SECURE=1                      # Session Cookie 带 Secure
+TRUST_PROXY=1                        # 登录限流使用反代给出的客户端 IP
+# 可选：管理面只听本机。公开端口上的 /api/admin/* 需另设 SHARE_ADMIN_API=1 才会打开
+# ADMIN_ADDR=127.0.0.1:8443
+```
+
+`PUBLIC_URL` 必须是探针能访问的公开源站（`:8080` 上的状态页、`/install.sh`、心跳），管理域名另算。`TRUST_PROXY` 只认 `X-Forwarded-For` 的第一段，反代要覆盖这个头。同时送上 `X-Forwarded-Proto`，这样漏设 `PUBLIC_URL` 时安装链接仍是 https。
+
+Caddy：
+
+```caddy
+tz.example.com {
+	reverse_proxy 127.0.0.1:8080 {
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+}
+
+# 可选，配合上面的 ADMIN_ADDR
+admin.tz.example.com {
+	reverse_proxy 127.0.0.1:8443 {
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+}
+```
+
+nginx：
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name tz.example.com;
+    # ssl_certificate     /path/fullchain.pem;
+    # ssl_certificate_key /path/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+# 可选：ADMIN_ADDR=127.0.0.1:8443
+server {
+    listen 443 ssl;
+    server_name admin.tz.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:8443;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+`install.sh?token=` 与 `install.ps1?token=` 会把节点 token 写进反代访问日志。安装命令复制一次即可；或先拉取脚本，再在参数里传 `--token`（见「一键扎针」）。
+
+## 备份与恢复
+
+```sh
+DATA_DIR=/var/lib/tanzhen ./scripts/backup.sh
+# BACKUP_DIR=/var/backups/tanzhen DATA_DIR=./data ./scripts/backup.sh
+```
+
+有 `sqlite3` 时用 `.backup` 做在线快照；没有则复制 `tanzhen.db` 以及存在的 `-wal` / `-shm`。`DATA_DIR/appearance/` 存在时一并打进包。产物是 `backups/tanzhen-YYYYmmdd-HHMMSS.tar.gz`（目录由 `BACKUP_DIR` 指定，默认 `./backups`）。
+
+恢复前先停 Hub。解压后把归档里的 `tanzhen.db`（以及归档中若有的 `-wal` / `-shm`）放回 `DATA_DIR`；`.backup` 的包已合并 WAL，数据目录里多出来的 `tanzhen.db-wal` 与 `tanzhen.db-shm` 删掉再启动。有 `appearance/` 则整目录放回 `DATA_DIR/appearance/`。步骤写在 `scripts/backup.sh` 开头。
+
 ## 管理登录
 
 | 变量 | 默认 | 说明 |
@@ -157,6 +236,8 @@ curl -fsSL http://YOUR_HUB:8080/install.sh | sh -s -- --uninstall
 curl -fsSL 'http://HUB/install.sh?hub=...&token=...' | INSTALL_DIR=$HOME/tz/bin CONFIG_DIR=$HOME/tz/etc sh
 ```
 
+`install.sh?token=`（Windows 为 `install.ps1?token=`）会把节点 token 写进反向代理访问日志。查询参数那条复制一次即可。要避开访问日志，用上面的两步形式：先拉取脚本，再传 `--token`。
+
 脚本会：
 
 1. 检测系统与架构：`linux` / `darwin`（macOS 走 nohup 兜底，无 launchd 服务）；`amd64` / `arm64` / `arm` / `386` / `riscv64` / `loong64`
@@ -201,12 +282,12 @@ irm 'http://YOUR_HUB:8080/install.ps1' | iex
 | `ADDR` / `PORT` | `:8080` / `8080` | 公开监听地址；`ADDR` 优先 |
 | `ADMIN_ADDR` | （无） | 管理后台独立监听地址，见上 |
 | `DATA_DIR` | `./data` | SQLite 与外观资源目录 |
-| `PUBLIC_URL` | 空 | 对外 Hub 地址（一键安装链接）；留空则取请求的 Host |
+| `PUBLIC_URL` | 空 | 对外 Hub 地址（一键安装链接与探针上报）；留空则取请求的 Host。HTTPS 反代写成 `https://` 源站 |
 | `RELEASES_DIR` | （无） | agent 二进制下载目录；未设则从 GitHub Releases 拉 |
 | `SESSION_TTL` | `168h` | 登录会话有效期 |
 | `LOGIN_LIMIT` / `LOGIN_WINDOW` | `5` / `5m` | 登录限流 |
-| `TRUST_PROXY` | `0` | 是否信任 `X-Forwarded-For` / `X-Real-IP` |
-| `COOKIE_SECURE` | 自动 | 强制 Session Cookie 带 `Secure`（HTTPS 反代后需为 `1`） |
+| `TRUST_PROXY` | `0` | 信任 `X-Forwarded-For` 的第一段作为客户端 IP（登录限流）。见「反向代理与 HTTPS」 |
+| `COOKIE_SECURE` | 自动 | 强制 Session Cookie 带 `Secure`（HTTPS 反代后设为 `1`） |
 | `OFFLINE_AFTER` | `30s` | 离线判定阈值 |
 | `HISTORY_POINTS` | `60` | 折线图内存环形缓冲长度（60 × 2s = 2 分钟） |
 | `SHARE_ADMIN_API` | 见上 | 已设 `ADMIN_ADDR` 时，是否仍公开管理 API |
@@ -298,7 +379,8 @@ cmd/agent        Agent 入口
 internal/hub     HTTP API + Session 认证 + SQLite + 限流
 internal/agent   采集 / 三网探测 / 上报
 internal/models  共享结构体
-scripts/build.sh 交叉编译
+scripts/build.sh   交叉编译
+scripts/backup.sh  SQLite 与外观备份
 docker-compose.yml
 ```
 
@@ -324,7 +406,7 @@ go vet ./...
 
 ## English (brief)
 
-Self-hosted Hub + Agent monitor for multiple VPS nodes. Public status page at `/` with sparklines, utilization meters and a table view in both themes; admin UI at `/admin` behind username/password session login (`ADMIN_USER` / `ADMIN_PASSWORD`; the hub refuses to boot on the built-in `changeme` unless `ALLOW_DEFAULT_PASSWORD=1`). Deploy a hub with one command — `curl -fsSL https://cdn.jsdelivr.net/gh/FengBujue0104/tanzhen@main/cmd/hub/static/install-hub.sh | sh` — which installs the binary as a systemd service and pre-stages every agent binary; then add nodes from `/admin` with a copy-paste one-liner (`curl '.../install.sh?hub=...&token=...' | sh` on Linux/macOS, `irm '.../install.ps1?...' | iex` on Windows). Both installers support `--uninstall`. Set `ADMIN_ADDR` to bind the admin UI and API to a separate listener. Agents report CPU / memory / swap / disks / network rates / cumulative traffic plus TCP latency and packet loss to the three Chinese carriers. **No remote command execution, no web terminal, no auto-update** — the agent only ever sends data.
+Self-hosted Hub + Agent monitor for multiple VPS nodes. Public status page at `/` with sparklines, utilization meters and a table view in both themes; admin UI at `/admin` behind username/password session login (`ADMIN_USER` / `ADMIN_PASSWORD`; the hub refuses to boot on the built-in `changeme` unless `ALLOW_DEFAULT_PASSWORD=1`). Deploy a hub with one command — `curl -fsSL https://cdn.jsdelivr.net/gh/FengBujue0104/tanzhen@main/cmd/hub/static/install-hub.sh | sh` — which installs the binary as a systemd service and pre-stages every agent binary; then add nodes from `/admin` with a copy-paste one-liner (`curl '.../install.sh?hub=...&token=...' | sh` on Linux/macOS, `irm '.../install.ps1?...' | iex` on Windows). Both installers support `--uninstall`. Set `ADMIN_ADDR` to bind the admin UI and API to a separate listener. Agents report CPU / memory / swap / disks / network rates / cumulative traffic plus TCP latency and packet loss to the three Chinese carriers. **No remote command execution, no web terminal, no auto-update** — the agent only ever sends data. Behind a reverse proxy set `PUBLIC_URL` to the https origin, `COOKIE_SECURE=1`, and `TRUST_PROXY=1` (first `X-Forwarded-For` hop). Install URLs that include `?token=` are written to proxy access logs; copy that command once, or pass `--token` after fetching the script. Database backups: `scripts/backup.sh`. License: MIT.
 
 ```bash
 ADMIN_PASSWORD=strong-secret go run ./cmd/hub

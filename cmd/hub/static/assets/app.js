@@ -607,7 +607,8 @@
   function loadText(m) {
     const l = m.load;
     if (!l || (!l.l1 && !l.l5 && !l.l15)) return "";
-    return "负载 " + [l.l1, l.l5, l.l15].map((v) => (v == null ? "—" : v.toFixed(2))).join(" · ");
+    const n = (v) => (v == null ? "—" : v.toFixed(2));
+    return "负载 1/5/15: " + n(l.l1) + " / " + n(l.l5) + " / " + n(l.l15);
   }
 
   function primaryDisk(m) {
