@@ -107,7 +107,9 @@ docker compose up -d --build
 
 `ADMIN_PASSWORD` 在 `docker-compose.yml` 里写作 `${ADMIN_PASSWORD:?...}`，省略时 compose 会直接报错 —— 这是有意的：用内置默认密码启动等于开放一个无鉴权的管理 API。
 
-HTTPS 反代见下一节。容器里管理面要单独隔离时，`ADMIN_ADDR` 监听容器内所有接口（`:8443`），由宿主机只把端口绑到回环：`127.0.0.1:8443:8443`。
+镜像只有一个。构建时打出 linux/amd64 与 linux/arm64 两份 hub，都放在容器 `/app/releases/`（`install-hub.sh` 按架构来取）；容器实际运行的是与构建平台一致的那份（BuildKit `TARGETARCH`，经典构建器回退 amd64）。Agent 二进制与 `scripts/build.sh` 相同，一并放进 `/app/releases/`。可选 `VERSION=v0.2.0 docker compose build` 把版本写进二进制。
+
+HTTPS 反代见下一节。反代终结 TLS 时，在 `docker-compose.yml` 里取消 `COOKIE_SECURE` 与 `TRUST_PROXY` 的注释。容器里管理面要单独隔离时，`ADMIN_ADDR` 监听容器内所有接口（`:8443`），由宿主机只把端口绑到回环：`127.0.0.1:8443:8443`。
 
 ## 反向代理与 HTTPS
 
@@ -381,6 +383,7 @@ internal/agent   采集 / 三网探测 / 上报
 internal/models  共享结构体
 scripts/build.sh   交叉编译
 scripts/backup.sh  SQLite 与外观备份
+.github/workflows  push/PR 跑 test 与 vet；v* tag 上传 ./releases
 docker-compose.yml
 ```
 

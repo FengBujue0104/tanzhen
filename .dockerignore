@@ -1,0 +1,10 @@
+.git
+.github
+data
+dist
+releases
+backups
+*.db
+*.db-*
+.env
+.DS_Store

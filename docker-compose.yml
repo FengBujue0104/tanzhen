@@ -1,6 +1,10 @@
 services:
   hub:
-    build: .
+    build:
+      context: .
+      args:
+        # Stamped into the binaries. Defaults to "dev" for a local compose build.
+        VERSION: ${VERSION:-dev}
     container_name: tanzhen-hub
     ports:
       - "8080:8080"
@@ -16,6 +20,10 @@ services:
       PUBLIC_URL: "${PUBLIC_URL:-http://localhost:8080}"
       RELEASES_DIR: /app/releases
       TZ: "${TZ:-Asia/Hong_Kong}"
+      # HTTPS 反代后取消注释（README「反向代理与 HTTPS」）。
+      # 明文 HTTP 不要打开 COOKIE_SECURE，否则浏览器会丢掉 Session。
+      # COOKIE_SECURE: "1"
+      # TRUST_PROXY: "1"
       # Bind the admin API to its own port and publish only that one to a
       # firewall/loopback-restricted rule, e.g. "127.0.0.1:8443:8443".
       # ADMIN_ADDR: ":8443"

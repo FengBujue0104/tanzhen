@@ -1,26 +1,36 @@
 FROM golang:1.25-alpine AS build
 WORKDIR /src
-RUN apk add --no-cache git ca-certificates
+RUN apk add --no-cache bash git ca-certificates
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 
-# The agent version is stamped so a hub can show which build is reporting.
+# scripts/build.sh stamps this into every binary (-X .../agent.Version).
 ARG VERSION=dev
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X github.com/FengBujue0104/tanzhen/internal/agent.Version=$VERSION" -o /out/tanzhen-hub ./cmd/hub \
- && for a in amd64 arm64 386; do \
-      CGO_ENABLED=0 GOOS=linux GOARCH=$a go build -ldflags="-s -w -X github.com/FengBujue0104/tanzhen/internal/agent.Version=$VERSION" -o /out/releases/tanzhen-agent-linux-$a ./cmd/agent; \
-    done \
- && CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w -X github.com/FengBujue0104/tanzhen/internal/agent.Version=$VERSION" -o /out/releases/tanzhen-agent-windows-amd64.exe ./cmd/agent \
- && CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -ldflags="-s -w -X github.com/FengBujue0104/tanzhen/internal/agent.Version=$VERSION" -o /out/releases/tanzhen-agent-windows-arm64.exe ./cmd/agent
+# BuildKit sets TARGETARCH to the image platform (amd64 or arm64). The
+# classic builder leaves it empty, so the container runs the linux/amd64
+# hub. Both hub binaries are always copied into /app/releases below.
+ARG TARGETARCH
+ENV VERSION=${VERSION}
+# Same artifact set as scripts/build.sh: hub linux/amd64+arm64 and every
+# agent the installers can ask for. The process we exec is the hub that
+# matches this image's architecture.
+RUN mkdir -p /out \
+ && ./scripts/build.sh \
+ && arch="${TARGETARCH:-amd64}" \
+ && case "$arch" in \
+      amd64|arm64) ;; \
+      *) echo "tanzhen hub image supports linux/amd64 and linux/arm64, not $arch" >&2; exit 1 ;; \
+    esac \
+ && cp "releases/tanzhen-hub-linux-${arch}" /out/tanzhen-hub \
+ && cp -a releases /out/releases
 
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /app
 COPY --from=build /out/tanzhen-hub /app/tanzhen-hub
-# The hub binary rides along in /releases so a hub deployed from another hub's
-# /install-hub.sh can mirror from this one instead of reaching GitHub.
-COPY --from=build /out/tanzhen-hub /app/releases/tanzhen-hub-linux-amd64
+# Both hub binaries ride along so a hub deployed from another hub's
+# /install-hub.sh can mirror either arch instead of reaching GitHub.
 COPY --from=build /out/releases /app/releases
 
 # No ADMIN_PASSWORD here on purpose: the hub refuses to boot on the built-in

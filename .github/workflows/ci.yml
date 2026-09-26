@@ -1,0 +1,50 @@
+# Test on push/PR to main. A v* tag (v0.2.0) also builds ./releases via
+# scripts/build.sh and uploads those binaries to a GitHub Release.
+# VERSION is the tag itself so ldflags match what install-hub.sh downloads.
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+      - run: go vet ./...
+
+  release:
+    name: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build release binaries
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: ./scripts/build.sh
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            releases/tanzhen-*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
