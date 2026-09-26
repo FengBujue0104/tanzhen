@@ -25,7 +25,7 @@
 curl -fsSL https://cdn.jsdelivr.net/gh/FengBujue0104/tanzhen@main/cmd/hub/static/install-hub.sh | sh
 ```
 
-脚本会自动：检测架构（amd64 / arm64…）→ 下载 Hub 与全部平台 agent 二进制 → 生成管理密码（预置 `ADMIN_PASSWORD='...'` 则用之，否则随机生成并打印一次）→ 推断 `PUBLIC_URL` → 注册 systemd 服务并开机自启 → 探活后打印状态页 / 管理后台地址。无需 Docker、无需 Go、无需克隆仓库。
+脚本会自动：检测架构（amd64 / arm64…）→ 下载 Hub 与全部平台 agent 二进制 → 生成管理密码（预置 `ADMIN_PASSWORD='...'` 则用之，否则随机生成并打印一次）→ 推断 `PUBLIC_URL` → 尽力放行本机防火墙端口 → 注册 systemd 服务并开机自启 → 探活后打印状态页 / 管理后台地址。无需 Docker、无需 Go、无需克隆仓库。
 
 随后：打开管理后台 → 新建节点 → 复制一键安装命令 → 到任意 VPS 粘贴执行，节点即上线。
 
@@ -37,6 +37,8 @@ curl -fsSL .../install-hub.sh | INSTALL_DIR=$HOME/tanzhen/bin CONFIG_DIR=$HOME/t
 # 卸载（保留数据 / 连数据）
 curl -fsSL .../install-hub.sh | sh -s -- --uninstall [--purge]
 ```
+
+默认在 root/sudo 下会尽力用 ufw / firewalld / iptables 放行 `TANZHEN_PORT`（失败不阻断安装）。设 `OPEN_FIREWALL=0` 可关闭。云厂商安全组仍需自行放行该端口。
 
 > 已有一个 Hub 时，也可以从它安装第二个：`curl -fsSL 'http://HUB/install-hub.sh?hub=http://HUB' | sh`（二进制优先从原 Hub 镜像，适合内网 / 无法直连 GitHub 的环境）。
 

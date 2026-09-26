@@ -16,6 +16,7 @@
 # 环境变量:
 #   ADMIN_PASSWORD    管理后台密码（缺失时交互输入或随机生成）
 #   TANZHEN_PORT      Hub 监听端口 (默认 8080)
+#   OPEN_FIREWALL     是否尝试对本机防火墙放行该端口（默认在 root/sudo 下尝试；0/false/no 关闭）
 #   PUBLIC_URL        状态页对外地址（默认按公网 IP 推断）
 #   TANZHEN_VERSION   版本标签 (默认 latest)
 #   TANZHEN_BASE_URL  二进制下载基址，默认 GitHub Releases；自建镜像时可指向自己的 Hub
@@ -56,7 +57,7 @@ usage() {
 
   curl -fsSL https://cdn.jsdelivr.net/gh/FengBujue0104/tanzhen@main/cmd/hub/static/install-hub.sh | sh
 
-可选: ADMIN_PASSWORD='...' TANZHEN_PORT=8080 PUBLIC_URL=http://IP:8080
+可选: ADMIN_PASSWORD='...' TANZHEN_PORT=8080 PUBLIC_URL=http://IP:8080 OPEN_FIREWALL=0
 卸载: ... | sh -s -- --uninstall [--purge]
 EOT
   exit 0
@@ -192,6 +193,128 @@ detect_public_ip() {
   fi
   [ -n "$_ip" ] || _ip="127.0.0.1"
   echo "$_ip"
+}
+
+# Best-effort host firewall open for TANZHEN_PORT. Never aborts install:
+# cloud security groups are outside our reach, and a failed ufw/iptables
+# call must not leave the hub uninstalled. Uninstall leaves these rules.
+try_open_firewall() {
+  _fw_port="$1"
+  _fw_skip=0
+  _fw_ok=0
+
+  if [ "$(uname -s)" != "Linux" ]; then
+    log "· 非 Linux，跳过本机防火墙放行"
+    _fw_skip=1
+  fi
+
+  _of="$(printf '%s' "${OPEN_FIREWALL:-}" | tr 'A-Z' 'a-z')"
+  case "$_of" in
+    0|false|no)
+      log "· OPEN_FIREWALL=$_of，跳过本机防火墙放行"
+      _fw_skip=1
+      ;;
+  esac
+
+  # Prefix-only installs (writable INSTALL_DIR, no root, no sudo) must not
+  # touch the host firewall. Root or $SUDO is required to attempt.
+  if [ "$_fw_skip" = 0 ] && [ "$(id -u)" -ne 0 ] && [ -z "${SUDO:-}" ]; then
+    log "· 无 root/sudo，跳过本机防火墙放行"
+    _fw_skip=1
+  fi
+
+  if [ "$_fw_skip" = 0 ]; then
+    log "→ 尝试对本机防火墙放行 TCP ${_fw_port}（失败不影响安装）"
+    _fw_picked=0
+    _ufw_st=""
+    _fw_st=""
+    _ipt=""
+    if command -v ufw >/dev/null 2>&1; then
+      _ufw_st="$($SUDO ufw status 2>/dev/null || true)"
+    fi
+    # 'Status: inactive' must not count as active.
+    if printf '%s\n' "$_ufw_st" | grep -qi '^Status:[[:space:]]*active'; then
+      _fw_picked=1
+      if $SUDO ufw allow "${_fw_port}/tcp" comment 'tanzhen-hub' >/dev/null 2>&1 \
+        || $SUDO ufw allow "${_fw_port}/tcp" >/dev/null 2>&1; then
+        log "✓ ufw 已放行 TCP ${_fw_port}"
+        _fw_ok=1
+      else
+        log "⚠ ufw 放行 TCP ${_fw_port} 失败"
+      fi
+    elif command -v firewall-cmd >/dev/null 2>&1; then
+      _fw_st="$($SUDO firewall-cmd --state 2>/dev/null || true)"
+      if [ "$_fw_st" != "running" ] && command -v systemctl >/dev/null 2>&1; then
+        if $SUDO systemctl is-active firewalld >/dev/null 2>&1; then
+          _fw_st="running"
+        fi
+      fi
+      if [ "$_fw_st" = "running" ]; then
+        _fw_picked=1
+        if $SUDO firewall-cmd --permanent --add-port="${_fw_port}/tcp" >/dev/null 2>&1; then
+          $SUDO firewall-cmd --reload >/dev/null 2>&1 || true
+          log "✓ firewalld 已放行 TCP ${_fw_port}"
+          _fw_ok=1
+        else
+          log "⚠ firewalld 放行 TCP ${_fw_port} 失败"
+        fi
+      fi
+    fi
+
+    # ufw-active / firewalld-running failures do not fall through: stacking
+    # backends can fight. iptables is only the last resort when neither is on.
+    if [ "$_fw_picked" = 0 ]; then
+      for _c in iptables iptables-nft iptables-legacy; do
+        if command -v "$_c" >/dev/null 2>&1; then
+          _ipt="$_c"
+          break
+        fi
+      done
+      if [ -n "$_ipt" ]; then
+        _have=0
+        if $SUDO "$_ipt" -C INPUT -p tcp --dport "$_fw_port" -j ACCEPT >/dev/null 2>&1; then
+          _have=1
+        elif $SUDO "$_ipt" -C INPUT -p tcp --dport "$_fw_port" -m comment --comment tanzhen-hub -j ACCEPT >/dev/null 2>&1; then
+          _have=1
+        fi
+        if [ "$_have" = 1 ]; then
+          log "· iptables 已有 TCP ${_fw_port} ACCEPT"
+          _fw_ok=1
+        elif $SUDO "$_ipt" -A INPUT -p tcp --dport "$_fw_port" -m comment --comment tanzhen-hub -j ACCEPT >/dev/null 2>&1 \
+          || $SUDO "$_ipt" -A INPUT -p tcp --dport "$_fw_port" -j ACCEPT >/dev/null 2>&1; then
+          log "✓ iptables 已放行 TCP ${_fw_port}"
+          _fw_ok=1
+          if command -v netfilter-persistent >/dev/null 2>&1; then
+            $SUDO netfilter-persistent save >/dev/null 2>&1 \
+              || log "⚠ iptables 规则已生效，但 netfilter-persistent save 失败"
+          elif $SUDO test -f /etc/iptables/rules.v4; then
+            _ipt_save=""
+            for _c in iptables-save iptables-nft-save iptables-legacy-save; do
+              if command -v "$_c" >/dev/null 2>&1; then
+                _ipt_save="$_c"
+                break
+              fi
+            done
+            if [ -n "$_ipt_save" ]; then
+              # Only rewrite an existing rules.v4 from the live table; never
+              # create that file (would look like a wipe of unrelated policy).
+              $SUDO sh -c "$_ipt_save > /etc/iptables/rules.v4" >/dev/null 2>&1 \
+                || log "⚠ iptables 规则已生效，但写入 /etc/iptables/rules.v4 失败"
+            fi
+          fi
+        else
+          log "⚠ iptables 放行 TCP ${_fw_port} 失败"
+        fi
+      fi
+    fi
+
+    if [ "$_fw_ok" = 0 ]; then
+      log "⚠ 未能自动放行本机防火墙 TCP ${_fw_port}，请手动检查 ufw / firewalld / iptables"
+    fi
+  fi
+
+  log "· 云安全组需另行放行 TCP ${_fw_port}（本脚本无法代开）"
+  return 0
 }
 
 do_uninstall() {
@@ -342,6 +465,7 @@ main() {
   fi
 
   # ── 5. service ───────────────────────────────────────────────────────────
+  try_open_firewall "$HUB_PORT"
   write_env_file
   # Stop the old unit before replacing the binary; a running process holds the
   # file busy on some systems and "Text file busy" kills the mv.
@@ -386,7 +510,8 @@ main() {
   fi
   log ""
   log " 下一步：打开管理后台 → 新建节点 → 复制一键安装命令"
-  log "       到任意 VPS 上执行即可接入。"
+  log "       到任意 VPS 上执行即可接入（探针请使用 $PUBLIC_URL）。"
+  log " 若其它 VPS 上的安装命令连不上，请检查云安全组 / 防火墙是否放行 TCP $HUB_PORT"
   log " 服务管理: systemctl {status,restart,stop} $SERVICE"
   log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
