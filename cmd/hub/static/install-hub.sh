@@ -239,6 +239,9 @@ DATA_DIR=$(_q "$DATA_DIR")
 RELEASES_DIR=$(_q "$RELEASES_DIR")
 PUBLIC_URL=$(_q "$PUBLIC_URL")
 TZ=$(_q "${TZ:-Asia/Shanghai}")
+# 可选：节点离线 / 流量将满时 POST JSON（见 README「Webhook 告警」）
+# WEBHOOK_URL=
+# WEBHOOK_TRAFFIC_PCT=90
 EOT
   $SUDO chmod 0600 "$ENV_FILE"
 }

@@ -207,7 +207,7 @@
         row.appendChild(who);
 
         const ops = el("div", "ops");
-        for (const [act, label, cls] of [["install", "安装命令", "primary"], ["edit", "编辑", "ghost"], ["del", "删除", "danger"]]) {
+        for (const [act, label, cls] of [["install", "安装命令", "primary"], ["rotate", "轮换 Token", "ghost"], ["edit", "编辑", "ghost"], ["del", "删除", "danger"]]) {
           const b = el("button", "btn btn-sm " + cls, label);
           b.type = "button";
           b.dataset.act = act;
@@ -241,6 +241,10 @@
       try {
         showInstall(await api("/api/admin/nodes/" + encodeURIComponent(id) + "/install"));
       } catch (e) { alert(e.message); }
+      return;
+    }
+    if (act === "rotate") {
+      rotateToken(id);
       return;
     }
     if (act === "edit") {
@@ -380,6 +384,28 @@
     renderInstallCmds(info || {});
     installPanel.classList.remove("hidden");
     installPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  async function rotateToken(id) {
+    if (!id) return;
+    if (!window.confirm("旧 Token 立即失效，已部署的 agent 需重新安装/更新 token 文件")) return;
+    try {
+      const res = await api("/api/admin/nodes/" + encodeURIComponent(id) + "/rotate-token", {
+        method: "POST",
+        body: "{}",
+      });
+      showInstall(res);
+      loadAdmin();
+    } catch (e) { alert(e.message); }
+  }
+
+  const btnRotate = $("#btn-rotate-token");
+  if (btnRotate) {
+    btnRotate.onclick = () => {
+      const id = installInfo && installInfo.id;
+      if (!id) return;
+      rotateToken(id);
+    };
   }
 
   function metaFromForm(prefix) {

@@ -1011,6 +1011,8 @@ input:focus { outline: none; border-color: var(--accent); }
   color: var(--ink-2);
 }
 
+.copy-actions { display: flex; gap: 0.3rem; flex-wrap: wrap; align-items: center; }
+
 pre.code {
   margin: 0;
   background: var(--page);

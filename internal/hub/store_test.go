@@ -125,6 +125,49 @@ func TestUnlimitedTrafficWithoutPeriod(t *testing.T) {
 	}
 }
 
+func TestRotateToken(t *testing.T) {
+	store := newTestStore(t)
+	id, old, err := store.CreateNode("n", models.NodeMeta{Location: "HK", TrafficQuota: 100, TrafficPeriod: 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.SaveHeartbeat(id, &models.Heartbeat{CPUUsage: 7, NetTotalUp: 10, NetTotalDown: 20}, models.NodeMeta{
+		Location: "HK", TrafficQuota: 100, TrafficPeriod: 30,
+	})
+	if countSamples(t, store, id) != 1 {
+		t.Fatal("expected one sample before rotate")
+	}
+
+	next, err := store.RotateToken(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next == "" || next == old {
+		t.Fatalf("token not rotated: old=%s new=%s", old, next)
+	}
+	if _, _, _, err := store.NodeByToken(old); err == nil {
+		t.Fatal("old token still resolves")
+	}
+	gotID, name, meta, err := store.NodeByToken(next)
+	if err != nil || gotID != id || name != "n" || meta.Location != "HK" {
+		t.Fatalf("new token: id=%s name=%s meta=%+v err=%v", gotID, name, meta, err)
+	}
+	if n := countSamples(t, store, id); n != 1 {
+		t.Fatalf("samples cleared on rotate: %d", n)
+	}
+	list, err := store.ListStatus()
+	if err != nil || len(list) != 1 || list[0].History == nil || len(list[0].History) != 1 {
+		t.Fatalf("history after rotate: %+v %v", list, err)
+	}
+	if list[0].Meta.Location != "HK" || list[0].Traffic.Quota != 100 {
+		t.Fatalf("meta/traffic after rotate: %+v", list[0])
+	}
+
+	if _, err := store.RotateToken("missing"); err == nil {
+		t.Fatal("expected ErrNoRows")
+	}
+}
+
 func TestDeleteNode(t *testing.T) {
 	store := newTestStore(t)
 	id, _, err := store.CreateNode("n", models.NodeMeta{})

@@ -170,6 +170,25 @@ func (s *Store) CreateNode(name string, meta models.NodeMeta) (id, token string,
 	return id, token, nil
 }
 
+// RotateToken replaces a node's agent token and returns the new one.
+// Samples, metadata, and traffic accounting are left untouched; only the
+// unique token column changes, so the previous credential stops authenticating.
+func (s *Store) RotateToken(id string) (string, error) {
+	token := randHex(24)
+	if token == "" {
+		return "", fmt.Errorf("rotate token: rng failed")
+	}
+	res, err := s.db.Exec(`UPDATE nodes SET token = ? WHERE id = ?`, token, id)
+	if err != nil {
+		return "", err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return "", sql.ErrNoRows
+	}
+	return token, nil
+}
+
 // DeleteNode removes a node, its live state, and its persisted samples.
 func (s *Store) DeleteNode(id string) error {
 	tx, err := s.db.Begin()
@@ -377,6 +396,9 @@ func (s *Store) HasNode(id string) (bool, error) {
 
 // Retention returns the configured sample retention window.
 func (s *Store) Retention() time.Duration { return s.retention }
+
+// OfflineAfter returns the configured heartbeat-silence threshold.
+func (s *Store) OfflineAfter() time.Duration { return s.offlineAfter }
 
 // ListHistory returns persisted samples in [from, to] (unix seconds, inclusive).
 func (s *Store) ListHistory(id string, from, to int64) ([]models.Sample, error) {

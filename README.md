@@ -11,7 +11,8 @@
 - **Hub**：创建节点、下发 Token；SQLite 持久化；公开状态页 + 独立管理后台
 - **Agent**：采集 CPU / 内存 / Swap / 磁盘 / 上下行网速与累计流量；探测三网延迟与丢包；HTTP JSON 心跳（默认 2s）
 - **状态页**：节点卡片 + 折线图（2 分钟滚动窗口）+ 利用率进度条 + 表格视图，深浅色主题，移动端友好
-- **管理后台**（`/admin`）：用户名 + 密码登录（HTTP-only Session）；节点增删改；创建后立即展示可复制的 Linux / Windows 一键命令；可选状态页背景图
+- **管理后台**（`/admin`）：用户名 + 密码登录（HTTP-only Session）；节点增删改与 Token 轮换；创建后立即展示可复制的 Linux / Windows 一键命令；可选状态页背景图
+- **Webhook 告警**（可选）：节点从在线变为离线、流量配额接近用尽时，向 `WEBHOOK_URL` POST 一条 JSON（无 Telegram / 邮件 / 多通道）
 - **节点元数据（Hub 侧可编辑）**：剩余流量配额、带宽、续费日期、价格、位置、备注
 - **一键卸载**：Hub `--uninstall` / `--purge`（连数据目录）；Agent `--uninstall`（token 作为凭证始终清除）
 - **明确不做**：远程命令执行、Web 终端、自动更新、插件市场 —— 探针只上报，不接受任何远端指令
@@ -87,6 +88,16 @@ curl -fsS -b /tmp/cj -X POST http://127.0.0.1:8080/api/admin/nodes \
 ```
 
 `traffic_quota` 单位为**字节**：500 GiB = `536870912000`。设为 `0` 表示不限量，此时状态页改显示开机以来的累计流量。
+
+### 轮换 Token
+
+节点 Token 泄露或要重装探针时，在管理后台打开该节点的安装命令面板点「轮换 Token」，或：
+
+```bash
+curl -fsS -b /tmp/cj -X POST http://127.0.0.1:8080/api/admin/nodes/<id>/rotate-token
+```
+
+响应与创建节点 / 安装信息相同（`id`、`name`、`token`、`install_cmd`、`win_cmd`、`install_url`、`win_url`、`agent_bin`、`hub_url`）。旧 Token 立即失效（心跳返回 401），样本、元数据与流量统计保留。把新的一键命令在目标机器再执行一次，或只更新 token 文件后重启 agent。
 
 ### 启动本地 Agent
 
@@ -295,6 +306,8 @@ irm 'http://YOUR_HUB:8080/install.ps1' | iex
 | `HISTORY_PERSIST_EVERY` | `15s` | SQLite 历史降采样间隔（距该节点上次落盘 ≥ 此值才再写一行） |
 | `HISTORY_RETENTION` | `2h` | SQLite 历史保留时长；更早的样本在落盘或定期清理时删除 |
 | `SHARE_ADMIN_API` | 见上 | 已设 `ADMIN_ADDR` 时，是否仍公开管理 API |
+| `WEBHOOK_URL` | 空 | 节点离线 / 流量将满时 POST JSON 的地址；留空则不发送 |
+| `WEBHOOK_TRAFFIC_PCT` | `90` | 流量配额告警阈值（百分比，需已设置配额） |
 
 ## API 摘要
 
@@ -310,12 +323,32 @@ irm 'http://YOUR_HUB:8080/install.ps1' | iex
 | GET/POST | `/api/admin/nodes` | 节点列表 / 创建 |
 | PATCH/DELETE | `/api/admin/nodes/{id}` | 改 / 删节点 |
 | GET | `/api/admin/nodes/{id}/install` | 安装命令 / URL |
+| POST | `/api/admin/nodes/{id}/rotate-token` | 轮换节点 Token（旧 Token 立即失效；响应同安装信息） |
 | GET | `/api/appearance` | 公开状态页外观设置 |
 | GET/PUT | `/api/admin/appearance` | 读 / 改外观设置 |
 | POST/DELETE | `/api/admin/appearance/background` | 上传 / 清除背景图 |
 | GET | `/media/background` | 背景图文件 |
 
 Agent token 只从 `X-Agent-Token` 头读取，绝不接受查询参数 —— 否则每次上报都会把 token 写进代理访问日志和 shell 历史。
+
+## Webhook 告警
+
+设 `WEBHOOK_URL` 后，Hub 在 sweep 与心跳时检测两类事件，各 POST 一条 JSON（超时约 5 秒，失败只打一条日志，不重试）。未设置则完全不发。
+
+| 事件 | 何时 | 载荷 |
+|------|------|------|
+| `node.offline` | 节点从在线变为离线 | `{"event":"node.offline","node_id","name","last_seen","ts"}` |
+| `node.traffic` | 已设配额且用量 ≥ `WEBHOOK_TRAFFIC_PCT` | `{"event":"node.traffic","node_id","name","pct","used","quota"}` |
+
+离线告警对同一节点只发一次，直到它重新上线（或冷却 ≥ `OFFLINE_AFTER` 的两倍）。流量告警每个周期只发一次，用量掉回阈值以下或周期重置后才会再发。没有 Telegram / 邮件 / 多通道路由。
+
+试用：打开 [webhook.site](https://webhook.site) 或任意 RequestBin，复制唯一 URL：
+
+```bash
+export WEBHOOK_URL='https://webhook.site/your-uuid'
+export WEBHOOK_TRAFFIC_PCT=90   # 可选，默认 90
+# 重启 Hub，停掉一个在线 agent，几秒内应收到 node.offline
+```
 
 ## 三网探测
 

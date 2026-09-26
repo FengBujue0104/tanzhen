@@ -310,6 +310,73 @@ func TestDefaultPasswordRefused(t *testing.T) {
 	}
 }
 
+func TestRotateTokenAPI(t *testing.T) {
+	static := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("x")}}
+	srv := newTestServer(t, static)
+	h := srv.Handler()
+
+	id, old, err := srv.Store.CreateNode("box", models.NodeMeta{Location: "HK"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hb := `{"cpu_usage":3,"hostname":"box"}`
+	rr := do(t, h, "POST", "/api/agent/heartbeat", hb,
+		map[string]string{"Content-Type": "application/json", "X-Agent-Token": old})
+	if rr.Code != 200 {
+		t.Fatalf("heartbeat with original token: %d %s", rr.Code, rr.Body.String())
+	}
+
+	if rr := do(t, h, "POST", "/api/admin/nodes/"+id+"/rotate-token", "{}", nil); rr.Code != 401 {
+		t.Fatalf("unauth rotate: %d", rr.Code)
+	}
+
+	rr = do(t, h, "POST", "/api/admin/nodes/"+id+"/rotate-token", "{}",
+		map[string]string{"Content-Type": "application/json", "X-Admin-Token": "apitok"})
+	if rr.Code != 200 {
+		t.Fatalf("rotate: %d %s", rr.Code, rr.Body.String())
+	}
+	var res map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	next, _ := res["token"].(string)
+	if next == "" || next == old {
+		t.Fatalf("token not rotated: %+v", res)
+	}
+	if res["id"] != id || res["name"] != "box" {
+		t.Fatalf("id/name: %+v", res)
+	}
+	cmd, _ := res["install_cmd"].(string)
+	if !strings.Contains(cmd, "curl -fsSL") || !strings.Contains(cmd, "install.sh?") {
+		t.Fatalf("install_cmd: %+v", res)
+	}
+	urlStr, _ := res["install_url"].(string)
+	if !strings.Contains(urlStr, "token=") {
+		t.Fatalf("install_url: %s", urlStr)
+	}
+	for _, k := range []string{"win_cmd", "win_url", "agent_bin", "hub_url"} {
+		if s, _ := res[k].(string); s == "" {
+			t.Fatalf("missing %s: %+v", k, res)
+		}
+	}
+
+	rr = do(t, h, "POST", "/api/agent/heartbeat", hb,
+		map[string]string{"Content-Type": "application/json", "X-Agent-Token": old})
+	if rr.Code != 401 {
+		t.Fatalf("old token still accepted: %d %s", rr.Code, rr.Body.String())
+	}
+	rr = do(t, h, "POST", "/api/agent/heartbeat", hb,
+		map[string]string{"Content-Type": "application/json", "X-Agent-Token": next})
+	if rr.Code != 200 {
+		t.Fatalf("new token rejected: %d %s", rr.Code, rr.Body.String())
+	}
+
+	if rr := do(t, h, "POST", "/api/admin/nodes/nope/rotate-token", "{}",
+		map[string]string{"X-Admin-Token": "apitok"}); rr.Code != 404 {
+		t.Fatalf("missing node: %d", rr.Code)
+	}
+}
+
 func TestHeartbeatNeedsHeaderToken(t *testing.T) {
 	static := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("x")}}
 	srv := newTestServer(t, static)
@@ -375,6 +442,28 @@ func TestResolveAdminCreds(t *testing.T) {
 	os.Unsetenv("ALLOW_DEFAULT_PASSWORD")
 	if _, err := NewServer(nil, Config{AdminPassword: "changeme"}, nil); err == nil {
 		t.Fatal("expected ErrDefaultPassword")
+	}
+}
+
+func TestLoadConfigWebhook(t *testing.T) {
+	t.Setenv("WEBHOOK_URL", " https://example.test/hook ")
+	t.Setenv("WEBHOOK_TRAFFIC_PCT", "85")
+	cfg := LoadConfig()
+	if cfg.WebhookURL != "https://example.test/hook" {
+		t.Fatalf("url: %q", cfg.WebhookURL)
+	}
+	if cfg.WebhookTrafficPct != 85 {
+		t.Fatalf("pct: %v", cfg.WebhookTrafficPct)
+	}
+	t.Setenv("WEBHOOK_TRAFFIC_PCT", "0")
+	cfg = LoadConfig()
+	if cfg.WebhookTrafficPct != 90 {
+		t.Fatalf("pct default on 0: %v", cfg.WebhookTrafficPct)
+	}
+	t.Setenv("WEBHOOK_TRAFFIC_PCT", "nope")
+	cfg = LoadConfig()
+	if cfg.WebhookTrafficPct != 90 {
+		t.Fatalf("pct default on garbage: %v", cfg.WebhookTrafficPct)
 	}
 }
 

@@ -55,6 +55,7 @@ type Server struct {
 	appearanceLoaded bool
 
 	stopSweep chan struct{}
+	alerts    *alertState
 }
 
 // Config is resolved from the environment by LoadConfig.
@@ -71,6 +72,11 @@ type Config struct {
 	AllowDefault  bool // permit shipping with the built-in "changeme" password
 	ShareAdminAPI bool // also mount /api/admin/* on the public listener
 	DataDir       string
+	// WebhookURL, when set, receives POSTs on node offline and traffic-quota
+	// near-full. Empty is a no-op. WebhookTrafficPct is the quota threshold
+	// (default 90).
+	WebhookURL        string
+	WebhookTrafficPct float64
 }
 
 // LoadConfig reads the environment.
@@ -80,16 +86,18 @@ func LoadConfig() Config {
 		log.Printf("hub: no ADMIN_PASSWORD/ADMIN_TOKEN set; falling back to the built-in default")
 	}
 	cfg := Config{
-		AdminUser:     envOr("ADMIN_USER", "admin"),
-		AdminPassword: pass,
-		AdminToken:    os.Getenv("ADMIN_API_TOKEN"),
-		PublicURL:     strings.TrimRight(os.Getenv("PUBLIC_URL"), "/"),
-		TrustProxy:    envBool("TRUST_PROXY"),
-		SessionTTL:    envDuration("SESSION_TTL", 7*24*time.Hour),
-		LoginLimit:    envInt("LOGIN_LIMIT", 5),
-		LoginWindow:   envDuration("LOGIN_WINDOW", 5*time.Minute),
-		AllowDefault:  envBool("ALLOW_DEFAULT_PASSWORD"),
-		DataDir:       envOr("DATA_DIR", "./data"),
+		AdminUser:         envOr("ADMIN_USER", "admin"),
+		AdminPassword:     pass,
+		AdminToken:        os.Getenv("ADMIN_API_TOKEN"),
+		PublicURL:         strings.TrimRight(os.Getenv("PUBLIC_URL"), "/"),
+		TrustProxy:        envBool("TRUST_PROXY"),
+		SessionTTL:        envDuration("SESSION_TTL", 7*24*time.Hour),
+		LoginLimit:        envInt("LOGIN_LIMIT", 5),
+		LoginWindow:       envDuration("LOGIN_WINDOW", 5*time.Minute),
+		AllowDefault:      envBool("ALLOW_DEFAULT_PASSWORD"),
+		DataDir:           envOr("DATA_DIR", "./data"),
+		WebhookURL:        strings.TrimSpace(os.Getenv("WEBHOOK_URL")),
+		WebhookTrafficPct: envFloat("WEBHOOK_TRAFFIC_PCT", 90),
 		StoreOptions: StoreOptions{
 			OfflineAfter: envDuration("OFFLINE_AFTER", DefaultOfflineAfter),
 			HistoryCap:   envInt("HISTORY_POINTS", DefaultHistoryCap),
@@ -104,6 +112,9 @@ func LoadConfig() Config {
 		cfg.ShareAdminAPI = true
 	} else {
 		cfg.ShareAdminAPI = envBool("SHARE_ADMIN_API")
+	}
+	if cfg.WebhookTrafficPct <= 0 || cfg.WebhookTrafficPct > 100 {
+		cfg.WebhookTrafficPct = 90
 	}
 	return cfg
 }
@@ -148,6 +159,7 @@ func NewServer(store *Store, cfg Config, static fs.FS) (*Server, error) {
 		passHash:  hash,
 		DataDir:   dataDir,
 		stopSweep: make(chan struct{}),
+		alerts:    newAlertState(),
 	}
 
 	s.public = s.buildPublic(static)
@@ -167,6 +179,25 @@ func (s *Server) AdminHandler() http.Handler { return secureHeaders(s.adminMux) 
 func (s *Server) sweepLoop() {
 	t := time.NewTicker(sweepInterval)
 	defer t.Stop()
+
+	// Offline detection needs a tick on the order of OFFLINE_AFTER, not the
+	// 10-minute session/prune interval. A nil channel never fires.
+	var wtC <-chan time.Time
+	if s.cfg.WebhookURL != "" {
+		every := DefaultOfflineAfter
+		if s.Store != nil {
+			if d := s.Store.OfflineAfter(); d > 0 {
+				every = d
+			}
+		}
+		if every > 15*time.Second {
+			every = 15 * time.Second
+		}
+		wt := time.NewTicker(every)
+		defer wt.Stop()
+		wtC = wt.C
+	}
+
 	for {
 		select {
 		case <-t.C:
@@ -174,6 +205,9 @@ func (s *Server) sweepLoop() {
 			if s.Store != nil {
 				s.Store.PruneSamples()
 			}
+			s.checkAlerts()
+		case <-wtC:
+			s.checkAlerts()
 		case <-s.stopSweep:
 			return
 		}
@@ -349,6 +383,7 @@ func (s *Server) registerAdminAPI(m *http.ServeMux) {
 	m.Handle("PATCH "+adminAPI+"/nodes/{id}", s.admin(limitBody(s.handleUpdateNode)))
 	m.Handle("DELETE "+adminAPI+"/nodes/{id}", s.admin(s.handleDeleteNode))
 	m.Handle("GET "+adminAPI+"/nodes/{id}/install", s.admin(s.handleInstallInfo))
+	m.Handle("POST "+adminAPI+"/nodes/{id}/rotate-token", s.admin(s.handleRotateToken))
 	m.Handle("GET "+adminAPI+"/appearance", s.admin(s.handleGetAppearance))
 	m.Handle("PUT "+adminAPI+"/appearance", s.admin(limitBody(s.handlePutAppearance)))
 	// Background upload uses its own MaxBytesReader (8 MiB); skip limitBody.
@@ -767,6 +802,9 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Store.SaveHeartbeat(id, &hb, meta)
+	if s.cfg.WebhookURL != "" {
+		go s.checkAlerts()
+	}
 	jsonOK(w, map[string]string{"status": "ok"})
 }
 
@@ -850,14 +888,37 @@ func (s *Server) handleInstallInfo(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusNotFound, "not found")
 		return
 	}
+	jsonOK(w, s.installPayload(r, id, name, token, meta))
+}
+
+func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	token, err := s.Store.RotateToken(id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			jsonErr(w, http.StatusNotFound, "not found")
+			return
+		}
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	name, _, meta, err := s.Store.GetNodeAdmin(id)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonOK(w, s.installPayload(r, id, name, token, meta))
+}
+
+func (s *Server) installPayload(r *http.Request, id, name, token string, meta models.NodeMeta) map[string]any {
 	base := s.hubBase(r)
 	linux, win, installURL, winURL, agentBin := s.installCmds(base, token)
-	jsonOK(w, map[string]any{
+	return map[string]any{
 		"id": id, "name": name, "token": token, "meta": meta,
 		"install_cmd": linux, "win_cmd": win,
 		"install_url": installURL, "win_url": winURL,
 		"agent_bin": agentBin, "hub_url": base,
-	})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -937,6 +998,18 @@ func envInt(key string, def int) int {
 		return def
 	}
 	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+func envFloat(key string, def float64) float64 {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.ParseFloat(v, 64)
 	if err != nil {
 		return def
 	}
