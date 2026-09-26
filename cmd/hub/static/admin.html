@@ -119,6 +119,47 @@
         <p id="copy-toast" class="copy-toast hidden">已复制到剪贴板</p>
       </section>
 
+
+      <section class="panel" id="appearance-panel">
+        <div class="panel-head"><h2>外观 / 背景</h2></div>
+        <p class="note">自定义公开状态页背景。建议 ≥1920×1080，JPEG / PNG / WebP，不超过 8MB。</p>
+        <p id="appearance-status" class="appearance-status">当前：默认背景</p>
+        <div class="row file-row">
+          <input type="file" id="bg-file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" />
+          <button type="button" class="btn primary btn-sm" id="btn-bg-upload">上传背景</button>
+        </div>
+        <div class="slider-row">
+          <label for="bg-dim">背景遮罩</label>
+          <input type="range" id="bg-dim" min="0" max="100" value="40" />
+          <span class="slider-val" id="bg-dim-val">40%</span>
+        </div>
+        <div class="slider-row">
+          <label for="bg-panel">卡片不透明度</label>
+          <input type="range" id="bg-panel" min="40" max="100" value="92" />
+          <span class="slider-val" id="bg-panel-val">92%</span>
+        </div>
+        <div class="row fit-row">
+          <label class="field inline" for="bg-fit">填充
+            <select id="bg-fit">
+              <option value="cover">覆盖 (cover)</option>
+              <option value="contain">包含 (contain)</option>
+            </select>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="bg-enabled" checked />
+            启用自定义背景
+          </label>
+        </div>
+        <div id="bg-preview" class="appearance-preview" aria-hidden="true">
+          <div class="dim-layer" id="bg-preview-dim"></div>
+          <div class="preview-card" id="bg-preview-card">预览 · 状态页卡片</div>
+        </div>
+        <div class="row">
+          <button type="button" class="btn primary" id="btn-bg-save">保存设置</button>
+          <button type="button" class="btn ghost" id="btn-bg-clear">清除背景</button>
+        </div>
+      </section>
+
       <section class="panel">
         <div class="panel-head">
           <h2>已有节点</h2>

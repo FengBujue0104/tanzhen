@@ -18,6 +18,7 @@ CONFIG_DIR="${CONFIG_DIR:-/etc/tanzhen}"
 TOKEN_FILE="$CONFIG_DIR/token"
 ENV_FILE="$CONFIG_DIR/agent.env"
 LOG_FILE="${LOG_FILE:-/var/log/tanzhen-agent.log}"
+PID_FILE="${PID_FILE:-/var/run/tanzhen-agent.pid}"
 SERVICE_NAME="tanzhen-agent"
 REPO="https://github.com/FengBujue0104/tanzhen"
 UNINSTALL=0
@@ -34,7 +35,8 @@ usage() {
   TANZHEN_VERSION   拉取的版本标签 (默认 latest)
   TANZHEN_INTERVAL  上报间隔 (默认 2s)
   TANZHEN_PROBE_EVERY / TANZHEN_PROBE_COUNT  三网探测间隔 / 每次发包数
-  INSTALL_DIR / CONFIG_DIR  安装与配置目录
+  INSTALL_DIR / CONFIG_DIR  安装与配置目录（可写前缀即可非 root 安装）
+  LOG_FILE / PID_FILE       nohup 日志与 pid
 EOT
   exit 1
 }
@@ -73,9 +75,9 @@ do_uninstall() {
       fi
       ;;
     *)
-      if [ -f /var/run/tanzhen-agent.pid ]; then
-        kill "$(cat /var/run/tanzhen-agent.pid)" 2>/dev/null || true
-        rm -f /var/run/tanzhen-agent.pid
+      if [ -f "$PID_FILE" ]; then
+        kill "$(cat "$PID_FILE")" 2>/dev/null || true
+        rm -f "$PID_FILE"
       fi
       ;;
   esac
@@ -94,8 +96,17 @@ do_uninstall() {
 log() { printf '%s\n' "$*"; }
 die() { printf '错误: %s\n' "$*" >&2; exit 1; }
 
-need_root() {
-  [ "$(id -u)" -eq 0 ] || die "请使用 root 运行（或 sudo）"
+# Non-root is allowed when INSTALL_DIR + CONFIG_DIR are already writable
+# (prefix / smoke installs). Privileged init systems still require root.
+need_root_or_prefix() {
+  if [ "$(id -u)" -eq 0 ]; then
+    return 0
+  fi
+  if mkdir -p "$INSTALL_DIR" "$CONFIG_DIR" 2>/dev/null \
+    && [ -w "$INSTALL_DIR" ] && [ -w "$CONFIG_DIR" ]; then
+    return 0
+  fi
+  die "请使用 root 运行（或 sudo），或设置 INSTALL_DIR/CONFIG_DIR 到可写目录"
 }
 
 # curl or wget, whichever the image happens to ship.
@@ -134,6 +145,11 @@ detect_os() {
 # Ordered most-preferred first. A container can have systemctl installed without
 # systemd being PID 1, so /run/systemd/system is the authoritative signal.
 detect_init() {
+  if [ "$(id -u)" -ne 0 ]; then
+    # Non-root prefix install cannot register system services.
+    INIT=nohup
+    return
+  fi
   if [ "$OS" = "darwin" ]; then
     # macOS has no systemd; launchd needs a plist in /Library, which is a lot
     # of surface for a monitor. A supervised nohup is honest and easy to
@@ -297,9 +313,10 @@ EOT
 # Last resort for containers and exotic init systems: a supervised nohup.
 install_nohup() {
   log "未检测到 systemd/OpenRC/procd，使用 nohup 后台运行"
-  if [ -f /var/run/tanzhen-agent.pid ]; then
-    kill "$(cat /var/run/tanzhen-agent.pid)" 2>/dev/null || true
-    rm -f /var/run/tanzhen-agent.pid
+  mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$PID_FILE")"
+  if [ -f "$PID_FILE" ]; then
+    kill "$(cat "$PID_FILE")" 2>/dev/null || true
+    rm -f "$PID_FILE"
   fi
   # Source the tunables so this path honors TANZHEN_INTERVAL / PROBE_* exactly
   # like the systemd unit does — the agent takes them as flags, not env.
@@ -311,12 +328,12 @@ install_nohup() {
     --interval "${TANZHEN_INTERVAL:-2s}" --probe-every "${TANZHEN_PROBE_EVERY:-30s}" \
     --probe-count "${TANZHEN_PROBE_COUNT:-4}" \
     >>"$LOG_FILE" 2>&1 &
-  echo $! > /var/run/tanzhen-agent.pid
-  log "✓ 已后台运行 (pid $(cat /var/run/tanzhen-agent.pid))，日志 $LOG_FILE"
+  echo $! > "$PID_FILE"
+  log "✓ 已后台运行 (pid $(cat "$PID_FILE"))，日志 $LOG_FILE"
 }
 
 main() {
-  need_root
+  need_root_or_prefix
   [ "$UNINSTALL" = 1 ] && do_uninstall
   detect_os
   detect_init

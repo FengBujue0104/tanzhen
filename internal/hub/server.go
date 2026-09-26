@@ -15,6 +15,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/FengBujue0104/tanzhen/internal/models"
@@ -45,6 +46,14 @@ type Server struct {
 	// fetch the agent binary. Empty means the route is not mounted.
 	releasesDir string
 
+	// DataDir holds appearance assets (background image) and other hub-local
+	// files that are not the SQLite database itself.
+	DataDir string
+
+	appearanceMu     sync.RWMutex
+	appearance       Appearance
+	appearanceLoaded bool
+
 	stopSweep chan struct{}
 }
 
@@ -61,6 +70,7 @@ type Config struct {
 	StoreOptions  StoreOptions
 	AllowDefault  bool // permit shipping with the built-in "changeme" password
 	ShareAdminAPI bool // also mount /api/admin/* on the public listener
+	DataDir       string
 }
 
 // LoadConfig reads the environment.
@@ -79,6 +89,7 @@ func LoadConfig() Config {
 		LoginLimit:    envInt("LOGIN_LIMIT", 5),
 		LoginWindow:   envDuration("LOGIN_WINDOW", 5*time.Minute),
 		AllowDefault:  envBool("ALLOW_DEFAULT_PASSWORD"),
+		DataDir:       envOr("DATA_DIR", "./data"),
 		StoreOptions: StoreOptions{
 			OfflineAfter: envDuration("OFFLINE_AFTER", DefaultOfflineAfter),
 			HistoryCap:   envInt("HISTORY_POINTS", DefaultHistoryCap),
@@ -122,6 +133,10 @@ func NewServer(store *Store, cfg Config, static fs.FS) (*Server, error) {
 		return nil, err
 	}
 
+	dataDir := cfg.DataDir
+	if dataDir == "" {
+		dataDir = "./data"
+	}
 	s := &Server{
 		Store:     store,
 		Static:    static,
@@ -129,6 +144,7 @@ func NewServer(store *Store, cfg Config, static fs.FS) (*Server, error) {
 		sessions:  NewSessionStore(cfg.SessionTTL),
 		limiter:   NewLoginLimiter(cfg.LoginLimit, cfg.LoginWindow),
 		passHash:  hash,
+		DataDir:   dataDir,
 		stopSweep: make(chan struct{}),
 	}
 
@@ -242,11 +258,13 @@ func (s *Server) buildPublic(static fs.FS) *http.ServeMux {
 	m := http.NewServeMux()
 
 	m.Handle("GET /api/status", s.sameOriginCORS(http.HandlerFunc(s.handleStatus)))
+	m.Handle("GET /api/appearance", s.sameOriginCORS(http.HandlerFunc(s.handleGetPublicAppearance)))
 	m.Handle("POST /api/agent/heartbeat", s.sameOriginCORS(limitBody(s.handleHeartbeat)))
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write([]byte("ok"))
 	})
+	m.HandleFunc("GET /media/background", s.handleMediaBackground)
 
 	if s.cfg.ShareAdminAPI {
 		s.registerAdminAPI(m)
@@ -256,6 +274,13 @@ func (s *Server) buildPublic(static fs.FS) *http.ServeMux {
 		files := http.FileServer(http.FS(static))
 		m.Handle("GET /assets/", withType(files))
 		m.HandleFunc("GET /{$}", s.serveIndex)
+		// When admin shares the public listener, the console HTML must live
+		// here too — otherwise /admin 404s with no ADMIN_ADDR set (the common
+		// one-click install path).
+		if s.cfg.ShareAdminAPI {
+			m.HandleFunc("GET /admin", s.serveAdmin)
+			m.HandleFunc("GET /admin/", s.serveAdmin)
+		}
 		m.HandleFunc("GET /install.sh", s.serveInstallSH)
 		m.HandleFunc("GET /install.ps1", s.serveInstallPS1)
 		m.HandleFunc("GET /install-hub.sh", s.serveInstallHub)
@@ -267,6 +292,9 @@ func (s *Server) buildPublic(static fs.FS) *http.ServeMux {
 func (s *Server) buildAdmin(static fs.FS) *http.ServeMux {
 	m := http.NewServeMux()
 	s.registerAdminAPI(m)
+	// Appearance media is public-ish (status page) but the admin preview also
+	// loads it; mount on the isolated admin listener so it works either way.
+	m.HandleFunc("GET /media/background", s.handleMediaBackground)
 	if static != nil {
 		files := http.FileServer(http.FS(static))
 		m.Handle("GET /assets/", withType(files))
@@ -315,6 +343,11 @@ func (s *Server) registerAdminAPI(m *http.ServeMux) {
 	m.Handle("PATCH "+adminAPI+"/nodes/{id}", s.admin(limitBody(s.handleUpdateNode)))
 	m.Handle("DELETE "+adminAPI+"/nodes/{id}", s.admin(s.handleDeleteNode))
 	m.Handle("GET "+adminAPI+"/nodes/{id}/install", s.admin(s.handleInstallInfo))
+	m.Handle("GET "+adminAPI+"/appearance", s.admin(s.handleGetAppearance))
+	m.Handle("PUT "+adminAPI+"/appearance", s.admin(limitBody(s.handlePutAppearance)))
+	// Background upload uses its own MaxBytesReader (8 MiB); skip limitBody.
+	m.Handle("POST "+adminAPI+"/appearance/background", s.admin(s.handleUploadBackground))
+	m.Handle("DELETE "+adminAPI+"/appearance/background", s.admin(s.handleDeleteBackground))
 }
 
 // withType pins the Content-Type Go's FileServer would otherwise guess wrong,

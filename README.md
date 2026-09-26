@@ -11,7 +11,7 @@
 - **Hub**：创建节点、下发 Token；SQLite 持久化；公开状态页 + 独立管理后台
 - **Agent**：采集 CPU / 内存 / Swap / 磁盘 / 上下行网速与累计流量；探测三网延迟与丢包；HTTP JSON 心跳（默认 2s）
 - **状态页**：节点卡片 + 折线图（2 分钟滚动窗口）+ 利用率进度条 + 表格视图，深浅色主题，移动端友好
-- **管理后台**（`/admin`）：用户名 + 密码登录（HTTP-only Session）；节点增删改；创建后立即展示可复制的 Linux / Windows 一键命令
+- **管理后台**（`/admin`）：用户名 + 密码登录（HTTP-only Session）；节点增删改；创建后立即展示可复制的 Linux / Windows 一键命令；可选状态页背景图
 - **节点元数据（Hub 侧可编辑）**：剩余流量配额、带宽、续费日期、价格、位置、备注
 - **一键卸载**：Hub `--uninstall` / `--purge`（连数据目录）；Agent `--uninstall`（token 作为凭证始终清除）
 - **明确不做**：远程命令执行、Web 终端、自动更新、插件市场 —— 探针只上报，不接受任何远端指令
@@ -31,6 +31,8 @@ curl -fsSL https://cdn.jsdelivr.net/gh/FengBujue0104/tanzhen@main/cmd/hub/static
 ```sh
 # 自定义
 curl -fsSL .../install-hub.sh | ADMIN_PASSWORD='换成一个强密码' TANZHEN_PORT=8080 PUBLIC_URL=http://1.2.3.4:8080 sh
+# 非 root / 前缀安装（冒烟测试、无权限环境）
+curl -fsSL .../install-hub.sh | INSTALL_DIR=$HOME/tanzhen/bin CONFIG_DIR=$HOME/tanzhen/etc TANZHEN_DATA_DIR=$HOME/tanzhen/data sh
 # 卸载（保留数据 / 连数据）
 curl -fsSL .../install-hub.sh | sh -s -- --uninstall [--purge]
 ```
@@ -150,6 +152,9 @@ curl -fsSL http://YOUR_HUB:8080/install.sh | sh -s -- --hub http://YOUR_HUB:8080
 
 # 卸载（移除服务、二进制与 token；/etc/tanzhen 与 Hub 共享，只会清除探针自身文件）
 curl -fsSL http://YOUR_HUB:8080/install.sh | sh -s -- --uninstall
+
+# 非 root：INSTALL_DIR/CONFIG_DIR 指到可写目录即可（走 nohup）
+curl -fsSL 'http://HUB/install.sh?hub=...&token=...' | INSTALL_DIR=$HOME/tz/bin CONFIG_DIR=$HOME/tz/etc sh
 ```
 
 脚本会：
@@ -195,7 +200,7 @@ irm 'http://YOUR_HUB:8080/install.ps1' | iex
 |------|------|------|
 | `ADDR` / `PORT` | `:8080` / `8080` | 公开监听地址；`ADDR` 优先 |
 | `ADMIN_ADDR` | （无） | 管理后台独立监听地址，见上 |
-| `DATA_DIR` | `./data` | SQLite 目录 |
+| `DATA_DIR` | `./data` | SQLite 与外观资源目录 |
 | `PUBLIC_URL` | 空 | 对外 Hub 地址（一键安装链接）；留空则取请求的 Host |
 | `RELEASES_DIR` | （无） | agent 二进制下载目录；未设则从 GitHub Releases 拉 |
 | `SESSION_TTL` | `168h` | 登录会话有效期 |
@@ -219,6 +224,10 @@ irm 'http://YOUR_HUB:8080/install.ps1' | iex
 | GET/POST | `/api/admin/nodes` | 节点列表 / 创建 |
 | PATCH/DELETE | `/api/admin/nodes/{id}` | 改 / 删节点 |
 | GET | `/api/admin/nodes/{id}/install` | 安装命令 / URL |
+| GET | `/api/appearance` | 公开状态页外观设置 |
+| GET/PUT | `/api/admin/appearance` | 读 / 改外观设置 |
+| POST/DELETE | `/api/admin/appearance/background` | 上传 / 清除背景图 |
+| GET | `/media/background` | 背景图文件 |
 
 Agent token 只从 `X-Agent-Token` 头读取，绝不接受查询参数 —— 否则每次上报都会把 token 写进代理访问日志和 shell 历史。
 

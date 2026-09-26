@@ -841,6 +841,45 @@
     if (mode === "table") applyMode();
   });
 
+  /* ----------------------------------------------------------- appearance -- */
+
+  function applyAppearance(a) {
+    const root = document.documentElement;
+    const enabled = a && a.enabled && a.background_url;
+    if (!enabled) {
+      document.body.classList.remove("has-custom-bg");
+      root.style.removeProperty("--bg-image");
+      root.style.removeProperty("--bg-dim");
+      root.style.removeProperty("--panel-alpha");
+      root.style.removeProperty("--bg-fit");
+      root.style.removeProperty("--bg-position");
+      return;
+    }
+    const url = String(a.background_url).replace(/"/g, "");
+    const dim = Math.max(0, Math.min(100, Number(a.dim != null ? a.dim : 40))) / 100;
+    const panel = Math.max(0, Math.min(100, Number(a.panel_opacity != null ? a.panel_opacity : 92))) / 100;
+    const fit = a.fit === "contain" ? "contain" : "cover";
+    const pos = a.position || "center";
+    document.body.classList.add("has-custom-bg");
+    root.style.setProperty("--bg-image", 'url("' + url + '")');
+    root.style.setProperty("--bg-dim", String(dim));
+    root.style.setProperty("--panel-alpha", String(panel));
+    root.style.setProperty("--bg-fit", fit);
+    root.style.setProperty("--bg-position", pos);
+  }
+
+  async function fetchAppearance() {
+    try {
+      const r = await fetch("/api/appearance");
+      if (!r.ok) return;
+      applyAppearance(await r.json());
+    } catch (e) {
+      console.warn(e);
+    }
+  }
+
+
+  fetchAppearance();
   tick();
   setInterval(tick, 2000);
 })();

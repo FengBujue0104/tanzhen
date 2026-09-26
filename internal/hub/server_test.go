@@ -34,6 +34,7 @@ func newTestServer(t *testing.T, static fstest.MapFS) *Server {
 		PublicURL:     "http://hub.example:8080",
 		SessionTTL:    time.Hour,
 		ShareAdminAPI: true,
+		DataDir:       dir,
 	}, static)
 	if err != nil {
 		t.Fatal(err)
@@ -353,3 +354,21 @@ func TestCSPFor(t *testing.T) {
 		t.Fatalf("json csp: %s", got)
 	}
 }
+
+func TestPublicServesAdminWhenShared(t *testing.T) {
+	static := fstest.MapFS{
+		"index.html": &fstest.MapFile{Data: []byte("<html>public</html>")},
+		"admin.html": &fstest.MapFile{Data: []byte("<html>admin-console</html>")},
+	}
+	srv := newTestServer(t, static)
+	h := srv.Handler()
+	rr := do(t, h, "GET", "/admin", "", nil)
+	if rr.Code != 200 || !strings.Contains(rr.Body.String(), "admin-console") {
+		t.Fatalf("/admin on public: %d %s", rr.Code, rr.Body.String())
+	}
+	rr = do(t, h, "GET", "/admin/", "", nil)
+	if rr.Code != 200 || !strings.Contains(rr.Body.String(), "admin-console") {
+		t.Fatalf("/admin/ on public: %d %s", rr.Code, rr.Body.String())
+	}
+}
+

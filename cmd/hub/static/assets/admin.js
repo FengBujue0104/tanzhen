@@ -117,6 +117,7 @@
     dashView.classList.remove("hidden");
     $("#admin-user-label").textContent = user || "";
     loadAdmin();
+    loadAppearance();
   }
 
   $("#login-form").onsubmit = async (e) => {
@@ -360,6 +361,134 @@
     if (saved === "light" || saved === "dark") document.documentElement.dataset.theme = saved;
   } catch (_) { /* ignore */ }
   paintThemeButton();
+
+  /* ---------------------------------------------------------- appearance -- */
+
+  const bgState = { url: null, enabled: false, dim: 40, panel: 92, fit: "cover" };
+
+  function applyAppearancePreview(opts) {
+    opts = opts || {};
+    const dim = opts.dim != null ? opts.dim : Number($("#bg-dim").value);
+    const panel = opts.panel != null ? opts.panel : Number($("#bg-panel").value);
+    const fit = opts.fit || $("#bg-fit").value || "cover";
+    const enabled = opts.enabled != null ? opts.enabled : $("#bg-enabled").checked;
+    const url = opts.url !== undefined ? opts.url : bgState.url;
+    $("#bg-dim-val").textContent = dim + "%";
+    $("#bg-panel-val").textContent = panel + "%";
+    const preview = $("#bg-preview");
+    const dimLayer = $("#bg-preview-dim");
+    const card = $("#bg-preview-card");
+    if (!preview || !dimLayer || !card) return;
+    if (url && enabled) {
+      preview.style.backgroundImage = "url(\"" + String(url).replace(/"/g, "") + "\")";
+      preview.style.backgroundSize = fit;
+    } else {
+      preview.style.backgroundImage = "none";
+    }
+    dimLayer.style.background = "rgba(0,0,0," + (dim / 100) + ")";
+    card.style.background = "color-mix(in oklab, var(--surface) " + panel + "%, transparent)";
+  }
+
+  async function loadAppearance() {
+    try {
+      const a = await api("/api/admin/appearance");
+      bgState.url = a.background_url || (a.has_background ? "/media/background" : null);
+      bgState.enabled = !!a.enabled;
+      bgState.dim = a.dim != null ? a.dim : 40;
+      bgState.panel = a.panel_opacity != null ? a.panel_opacity : 92;
+      bgState.fit = a.fit || "cover";
+      $("#bg-dim").value = bgState.dim;
+      $("#bg-panel").value = bgState.panel;
+      $("#bg-fit").value = bgState.fit;
+      $("#bg-enabled").checked = bgState.enabled;
+      const st = $("#appearance-status");
+      if (bgState.url && bgState.enabled) {
+        st.textContent = "当前：自定义背景已启用";
+        st.classList.add("on");
+      } else if (a.has_background) {
+        st.textContent = "当前：已上传背景（未启用）";
+        st.classList.remove("on");
+      } else {
+        st.textContent = "当前：默认背景";
+        st.classList.remove("on");
+      }
+      const url = bgState.url ? bgState.url.split("?")[0] + "?t=" + Date.now() : null;
+      applyAppearancePreview({
+        dim: bgState.dim,
+        panel: bgState.panel,
+        fit: bgState.fit,
+        enabled: bgState.enabled,
+        url: url,
+      });
+      if (url) bgState.url = url;
+    } catch (e) {
+      if (e.status === 401) return;
+      console.warn("appearance", e);
+    }
+  }
+
+  $("#bg-dim").oninput = () => applyAppearancePreview();
+  $("#bg-panel").oninput = () => applyAppearancePreview();
+  $("#bg-fit").onchange = () => applyAppearancePreview();
+  $("#bg-enabled").onchange = () => applyAppearancePreview();
+
+  $("#btn-bg-upload").onclick = async () => {
+    const input = $("#bg-file");
+    if (!input.files || !input.files[0]) {
+      alert("请先选择图片文件");
+      return;
+    }
+    const fd = new FormData();
+    fd.append("file", input.files[0]);
+    try {
+      const r = await fetch("/api/admin/appearance/background", {
+        method: "POST",
+        credentials: "same-origin",
+        body: fd,
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || r.statusText);
+      input.value = "";
+      await loadAppearance();
+    } catch (e) {
+      alert(e.message || "上传失败");
+    }
+  };
+
+  $("#btn-bg-save").onclick = async () => {
+    try {
+      await api("/api/admin/appearance", {
+        method: "PUT",
+        body: JSON.stringify({
+          enabled: $("#bg-enabled").checked,
+          dim: Number($("#bg-dim").value),
+          panel_opacity: Number($("#bg-panel").value),
+          fit: $("#bg-fit").value,
+          position: "center",
+        }),
+      });
+      await loadAppearance();
+    } catch (e) {
+      alert(e.message || "保存失败");
+    }
+  };
+
+  $("#btn-bg-clear").onclick = async () => {
+    if (!confirm("清除自定义背景并恢复默认？")) return;
+    try {
+      const r = await fetch("/api/admin/appearance/background", {
+        method: "DELETE",
+        credentials: "same-origin",
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || r.statusText);
+      bgState.url = null;
+      await loadAppearance();
+    } catch (e) {
+      alert(e.message || "清除失败");
+    }
+  };
+
 
   checkAuth();
 })();

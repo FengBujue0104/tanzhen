@@ -20,6 +20,9 @@
 #   TANZHEN_VERSION   版本标签 (默认 latest)
 #   TANZHEN_BASE_URL  二进制下载基址，默认 GitHub Releases；自建镜像时可指向自己的 Hub
 #   TANZHEN_DATA_DIR  数据目录 (默认 /var/lib/tanzhen)
+#   INSTALL_DIR       二进制目录 (默认 /usr/local/bin)；与 CONFIG_DIR 一起可作为非 root 前缀
+#   CONFIG_DIR        配置目录 (默认 /etc/tanzhen)
+#   LOG_FILE / PID_FILE  nohup 日志与 pid（非 systemd 时）
 #
 # POSIX sh on purpose, same as install.sh: Alpine and other minimal images
 # have no bash. The whole deployment is one static binary plus one systemd
@@ -30,14 +33,17 @@ REPO="https://github.com/FengBujue0104/tanzhen"
 VERSION="${TANZHEN_VERSION:-latest}"
 BASE_URL="${TANZHEN_BASE_URL:-$REPO/releases/$VERSION/download}"
 HUB_PORT="${TANZHEN_PORT:-8080}"
-INSTALL_DIR="/usr/local/bin"
-CONFIG_DIR="/etc/tanzhen"
+# Prefix-friendly overrides: set INSTALL_DIR/CONFIG_DIR/DATA_DIR under a home
+# or workspace path for non-root smoke installs. Defaults keep production paths.
+INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
+CONFIG_DIR="${CONFIG_DIR:-/etc/tanzhen}"
 DATA_DIR="${TANZHEN_DATA_DIR:-/var/lib/tanzhen}"
-RELEASES_DIR="$DATA_DIR/releases"
+RELEASES_DIR="${RELEASES_DIR:-$DATA_DIR/releases}"
 ENV_FILE="$CONFIG_DIR/hub.env"
-LOG_FILE="/var/log/tanzhen-hub.log"
+LOG_FILE="${LOG_FILE:-/var/log/tanzhen-hub.log}"
+PID_FILE="${PID_FILE:-/var/run/tanzhen-hub.pid}"
 SERVICE="tanzhen-hub"
-UNIT_FILE="/etc/systemd/system/$SERVICE.service"
+UNIT_FILE="${UNIT_FILE:-/etc/systemd/system/$SERVICE.service}"
 UNINSTALL=0
 PURGE=0
 
@@ -65,10 +71,19 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# Root, or transparent sudo. A fresh VPS is usually root; a hardened one is not.
+# Root, transparent sudo, or non-root prefix install.
+# When INSTALL_DIR (and siblings) live under a writable tree, skip privilege
+# escalation entirely — used by CI / local smoke tests under a workspace prefix.
 SUDO=""
-if [ "$(id -u)" -ne 0 ]; then
-  command -v sudo >/dev/null 2>&1 || die "请使用 root 运行（或安装 sudo）"
+NEED_PRIV=1
+if [ "$(id -u)" -eq 0 ]; then
+  NEED_PRIV=0
+elif mkdir -p "$INSTALL_DIR" "$CONFIG_DIR" "$DATA_DIR" 2>/dev/null \
+  && [ -w "$INSTALL_DIR" ] && [ -w "$CONFIG_DIR" ] && [ -w "$DATA_DIR" ]; then
+  NEED_PRIV=0
+fi
+if [ "$NEED_PRIV" = 1 ]; then
+  command -v sudo >/dev/null 2>&1 || die "请使用 root 运行（或安装 sudo），或设置 INSTALL_DIR/CONFIG_DIR/TANZHEN_DATA_DIR 到可写目录"
   SUDO="sudo"
 fi
 
@@ -139,9 +154,14 @@ detect_arch() {
 }
 
 detect_init() {
-  if [ -d /run/systemd/system ]; then
-    INIT=systemd
+  if [ -n "$SUDO" ] || [ "$(id -u)" -eq 0 ]; then
+    if [ -d /run/systemd/system ]; then
+      INIT=systemd
+    else
+      INIT=nohup
+    fi
   else
+    # Non-root prefix install cannot write unit files under /etc.
     INIT=nohup
   fi
 }
@@ -182,9 +202,9 @@ do_uninstall() {
     $SUDO rm -f "$UNIT_FILE"
     $SUDO systemctl daemon-reload 2>/dev/null || true
   else
-    if [ -f /var/run/tanzhen-hub.pid ]; then
-      kill "$(cat /var/run/tanzhen-hub.pid)" 2>/dev/null || true
-      $SUDO rm -f /var/run/tanzhen-hub.pid
+    if [ -f "$PID_FILE" ]; then
+      kill "$(cat "$PID_FILE")" 2>/dev/null || true
+      $SUDO rm -f "$PID_FILE"
     fi
   fi
   $SUDO rm -f "$INSTALL_DIR/tanzhen-hub"
@@ -259,8 +279,10 @@ install_nohup() {
   # The env file is sourced inside the privileged shell, not before it: sudo's
   # env_reset would drop everything exported here, and the hub would start with
   # no ADMIN_PASSWORD and the default data dir.
-  $SUDO sh -c "set -a; . '$ENV_FILE'; set +a; nohup '$INSTALL_DIR/tanzhen-hub' >>'$LOG_FILE' 2>&1 & echo \$! > /var/run/tanzhen-hub.pid"
-  log "✓ 已后台运行 (pid $(cat /var/run/tanzhen-hub.pid))，日志 $LOG_FILE"
+  # Ensure log + pid dirs exist (PREFIX installs may put them under the workspace).
+  $SUDO mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$PID_FILE")"
+  $SUDO sh -c "set -a; . '$ENV_FILE'; set +a; nohup '$INSTALL_DIR/tanzhen-hub' >>'$LOG_FILE' 2>&1 & echo \$! > '$PID_FILE'"
+  log "✓ 已后台运行 (pid $(cat "$PID_FILE"))，日志 $LOG_FILE"
 }
 
 main() {
@@ -324,9 +346,9 @@ main() {
     $SUDO systemctl stop "$SERVICE" 2>/dev/null || true
     install_systemd
   else
-    if [ -f /var/run/tanzhen-hub.pid ]; then
-      kill "$(cat /var/run/tanzhen-hub.pid)" 2>/dev/null || true
-      $SUDO rm -f /var/run/tanzhen-hub.pid
+    if [ -f "$PID_FILE" ]; then
+      kill "$(cat "$PID_FILE")" 2>/dev/null || true
+      $SUDO rm -f "$PID_FILE"
     fi
     install_nohup
   fi

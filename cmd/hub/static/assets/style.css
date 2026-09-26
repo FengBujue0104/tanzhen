@@ -60,6 +60,13 @@
   --hair: 1px;
   --radius: 8px;
   --radius-sm: 5px;
+
+  /* optional custom status-page background (set by app.js) */
+  --bg-image: none;
+  --bg-dim: 0;
+  --panel-alpha: 1;
+  --bg-fit: cover;
+  --bg-position: center;
 }
 
 @media (min-resolution: 1.5dppx) {
@@ -1085,4 +1092,106 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
+}
+
+
+/* ------------------------------------------------------------------ appearance */
+
+body.has-custom-bg {
+  background-color: var(--page);
+  background-image: var(--bg-image);
+  background-size: var(--bg-fit);
+  background-position: var(--bg-position);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+
+body.has-custom-bg::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: rgba(0, 0, 0, var(--bg-dim));
+}
+
+body.has-custom-bg > * {
+  position: relative;
+  z-index: 1;
+}
+
+body.has-custom-bg .node,
+body.has-custom-bg .panel,
+body.has-custom-bg .top,
+body.has-custom-bg .login-card,
+body.has-custom-bg .summary,
+body.has-custom-bg .tableview {
+  background: color-mix(in oklab, var(--surface) calc(var(--panel-alpha) * 100%), transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.appearance-status {
+  margin: 0 0 0.75rem;
+  font-size: 0.78rem;
+  color: var(--ink-3);
+}
+.appearance-status.on { color: var(--good-text); }
+
+.slider-row {
+  display: grid;
+  grid-template-columns: 7.5rem 1fr 3rem;
+  gap: 0.6rem;
+  align-items: center;
+  margin: 0.45rem 0;
+  font-size: 0.8rem;
+  color: var(--ink-2);
+}
+.slider-row input[type="range"] { width: 100%; }
+.slider-val {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+  text-align: right;
+}
+
+.file-row { align-items: center; gap: 0.6rem; flex-wrap: wrap; margin: 0.5rem 0 0.75rem; }
+.file-row input[type="file"] { font-size: 0.78rem; color: var(--ink-2); max-width: 100%; }
+
+.fit-row { align-items: center; gap: 1rem; flex-wrap: wrap; margin: 0.6rem 0; }
+.fit-row .field.inline { margin: 0; min-width: 10rem; }
+.fit-row .check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--ink-2);
+  margin: 0;
+}
+.fit-row .check input { width: auto; margin: 0; }
+
+.appearance-preview {
+  position: relative;
+  margin-top: 0.75rem;
+  height: 110px;
+  border-radius: var(--radius);
+  border: var(--hair) solid var(--rule);
+  background: var(--surface-2) center/cover no-repeat;
+  overflow: hidden;
+}
+.appearance-preview .dim-layer {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+}
+.appearance-preview .preview-card {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  padding: 0.55rem 0.75rem;
+  border-radius: var(--radius-sm);
+  border: var(--hair) solid var(--rule);
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: 0.78rem;
 }
