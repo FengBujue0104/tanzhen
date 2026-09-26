@@ -291,14 +291,17 @@ irm 'http://YOUR_HUB:8080/install.ps1' | iex
 | `TRUST_PROXY` | `0` | 信任 `X-Forwarded-For` 的第一段作为客户端 IP（登录限流）。见「反向代理与 HTTPS」 |
 | `COOKIE_SECURE` | 自动 | 强制 Session Cookie 带 `Secure`（HTTPS 反代后设为 `1`） |
 | `OFFLINE_AFTER` | `30s` | 离线判定阈值 |
-| `HISTORY_POINTS` | `60` | 折线图内存环形缓冲长度（60 × 2s = 2 分钟） |
+| `HISTORY_POINTS` | `60` | 折线图内存环形缓冲长度（60 × 2s = 2 分钟）；启动时从 SQLite 回填 |
+| `HISTORY_PERSIST_EVERY` | `15s` | SQLite 历史降采样间隔（距该节点上次落盘 ≥ 此值才再写一行） |
+| `HISTORY_RETENTION` | `2h` | SQLite 历史保留时长；更早的样本在落盘或定期清理时删除 |
 | `SHARE_ADMIN_API` | 见上 | 已设 `ADMIN_ADDR` 时，是否仍公开管理 API |
 
 ## API 摘要
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/status` | 公开节点状态（卡片与表格视图的数据源） |
+| GET | `/api/status` | 公开节点状态（卡片与表格视图的数据源；含短窗口 `history`） |
+| GET | `/api/nodes/{id}/history` | 公开节点历史。`from`/`to` 为 unix 秒，默认近 2 小时，不超过 `HISTORY_RETENTION`。响应 `{samples:[...]}` |
 | POST | `/api/agent/heartbeat` | Agent 上报（头 `X-Agent-Token`） |
 | GET | `/healthz` | 存活探针 |
 | POST | `/api/admin/login` | 用户名密码登录（设 Session Cookie） |

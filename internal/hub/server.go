@@ -93,6 +93,8 @@ func LoadConfig() Config {
 		StoreOptions: StoreOptions{
 			OfflineAfter: envDuration("OFFLINE_AFTER", DefaultOfflineAfter),
 			HistoryCap:   envInt("HISTORY_POINTS", DefaultHistoryCap),
+			PersistEvery: envDuration("HISTORY_PERSIST_EVERY", DefaultPersistEvery),
+			Retention:    envDuration("HISTORY_RETENTION", DefaultRetention),
 		},
 	}
 	// With no ADMIN_ADDR there is nowhere else for /api/admin/* to live, so the
@@ -169,6 +171,9 @@ func (s *Server) sweepLoop() {
 		select {
 		case <-t.C:
 			s.sessions.Sweep()
+			if s.Store != nil {
+				s.Store.PruneSamples()
+			}
 		case <-s.stopSweep:
 			return
 		}
@@ -258,6 +263,7 @@ func (s *Server) buildPublic(static fs.FS) *http.ServeMux {
 	m := http.NewServeMux()
 
 	m.Handle("GET /api/status", s.sameOriginCORS(http.HandlerFunc(s.handleStatus)))
+	m.Handle("GET /api/nodes/{id}/history", s.sameOriginCORS(http.HandlerFunc(s.handleNodeHistory)))
 	m.Handle("GET /api/appearance", s.sameOriginCORS(http.HandlerFunc(s.handleGetPublicAppearance)))
 	m.Handle("POST /api/agent/heartbeat", s.sameOriginCORS(limitBody(s.handleHeartbeat)))
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -448,7 +454,6 @@ func (s *Server) serveInstallPS1(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", cspFor("text/plain"))
 	_, _ = w.Write(out)
 }
-
 
 // appendSHProbeInject writes optional probe tunables from the install URL query
 // into the POSIX installer. Keys: probe_interval, probe_count, probe_provinces,
@@ -689,6 +694,58 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"updated_at": time.Now(),
 		"server":     "tanzhen",
 	})
+}
+
+func (s *Server) handleNodeHistory(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	ok, err := s.Store.HasNode(id)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !ok {
+		jsonErr(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	now := time.Now().Unix()
+	ret := int64(s.Store.Retention() / time.Second)
+	if ret < 1 {
+		ret = int64(DefaultRetention / time.Second)
+	}
+	from := now - ret
+	to := now
+	if v := strings.TrimSpace(r.URL.Query().Get("from")); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			jsonErr(w, http.StatusBadRequest, "bad from")
+			return
+		}
+		from = n
+	}
+	if v := strings.TrimSpace(r.URL.Query().Get("to")); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			jsonErr(w, http.StatusBadRequest, "bad to")
+			return
+		}
+		to = n
+	}
+	minT := now - ret
+	if from < minT {
+		from = minT
+	}
+
+	samples, err := s.Store.ListHistory(id, from, to)
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if samples == nil {
+		samples = []models.Sample{}
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	jsonOK(w, map[string]any{"samples": samples})
 }
 
 func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {

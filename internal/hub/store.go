@@ -15,20 +15,28 @@ import (
 const (
 	DefaultOfflineAfter = 30 * time.Second
 	DefaultHistoryCap   = 60
+	DefaultPersistEvery = 15 * time.Second
+	DefaultRetention    = 2 * time.Hour
 )
 
 type Store struct {
 	db *sql.DB
 	mu sync.RWMutex
 
-	// In-memory live state. Metrics are not persisted: a hub restart simply
-	// waits for the next heartbeat (a couple of seconds).
-	metrics map[string]*models.Heartbeat
-	seen    map[string]time.Time
-	history map[string][]models.Sample
+	// In-memory live state. Metrics themselves are not persisted: a hub restart
+	// waits for the next heartbeat. History is downsampled into SQLite and
+	// rehydrated on open.
+	metrics     map[string]*models.Heartbeat
+	seen        map[string]time.Time
+	history     map[string][]models.Sample
+	lastPersist map[string]int64 // unix seconds of last SQLite sample per node
 
 	offlineAfter time.Duration
 	historyCap   int
+	persistEvery time.Duration
+	retention    time.Duration
+
+	now func() time.Time
 }
 
 func NewStore(path string, opts StoreOptions) (*Store, error) {
@@ -45,8 +53,12 @@ func NewStore(path string, opts StoreOptions) (*Store, error) {
 		metrics:      make(map[string]*models.Heartbeat),
 		seen:         make(map[string]time.Time),
 		history:      make(map[string][]models.Sample),
+		lastPersist:  make(map[string]int64),
 		offlineAfter: opts.OfflineAfter,
 		historyCap:   opts.HistoryCap,
+		persistEvery: opts.PersistEvery,
+		retention:    opts.Retention,
+		now:          time.Now,
 	}
 	if s.offlineAfter <= 0 {
 		s.offlineAfter = DefaultOfflineAfter
@@ -54,7 +66,17 @@ func NewStore(path string, opts StoreOptions) (*Store, error) {
 	if s.historyCap <= 0 {
 		s.historyCap = DefaultHistoryCap
 	}
+	if s.persistEvery <= 0 {
+		s.persistEvery = DefaultPersistEvery
+	}
+	if s.retention <= 0 {
+		s.retention = DefaultRetention
+	}
 	if err := s.migrate(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := s.hydrateHistory(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -65,6 +87,15 @@ func NewStore(path string, opts StoreOptions) (*Store, error) {
 type StoreOptions struct {
 	OfflineAfter time.Duration
 	HistoryCap   int
+	PersistEvery time.Duration
+	Retention    time.Duration
+}
+
+func (s *Store) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -90,6 +121,26 @@ func (s *Store) migrate() error {
 		if _, err := s.db.Exec(`ALTER TABLE nodes ADD COLUMN traffic_json TEXT NOT NULL DEFAULT '{}'`); err != nil {
 			return fmt.Errorf("migrate traffic_json: %w", err)
 		}
+	}
+	if _, err := s.db.Exec(`
+	CREATE TABLE IF NOT EXISTS samples (
+	  node_id TEXT NOT NULL,
+	  t INTEGER NOT NULL,
+	  cpu REAL NOT NULL DEFAULT 0,
+	  mem REAL NOT NULL DEFAULT 0,
+	  up INTEGER NOT NULL DEFAULT 0,
+	  down INTEGER NOT NULL DEFAULT 0,
+	  lat_ct REAL NOT NULL DEFAULT -1,
+	  lat_cu REAL NOT NULL DEFAULT -1,
+	  lat_cm REAL NOT NULL DEFAULT -1,
+	  loss_ct REAL NOT NULL DEFAULT -1,
+	  loss_cu REAL NOT NULL DEFAULT -1,
+	  loss_cm REAL NOT NULL DEFAULT -1,
+	  UNIQUE(node_id, t)
+	);
+	CREATE INDEX IF NOT EXISTS idx_samples_node_t ON samples(node_id, t);
+	`); err != nil {
+		return fmt.Errorf("migrate samples: %w", err)
 	}
 	return nil
 }
@@ -119,9 +170,14 @@ func (s *Store) CreateNode(name string, meta models.NodeMeta) (id, token string,
 	return id, token, nil
 }
 
-// DeleteNode removes a node and its live state.
+// DeleteNode removes a node, its live state, and its persisted samples.
 func (s *Store) DeleteNode(id string) error {
-	res, err := s.db.Exec(`DELETE FROM nodes WHERE id = ?`, id)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.Exec(`DELETE FROM nodes WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
@@ -129,10 +185,17 @@ func (s *Store) DeleteNode(id string) error {
 	if n == 0 {
 		return sql.ErrNoRows
 	}
+	if _, err := tx.Exec(`DELETE FROM samples WHERE node_id = ?`, id); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	delete(s.metrics, id)
 	delete(s.seen, id)
 	delete(s.history, id)
+	delete(s.lastPersist, id)
 	s.mu.Unlock()
 	return nil
 }
@@ -191,22 +254,57 @@ func (s *Store) NodeByToken(token string) (id, name string, meta models.NodeMeta
 
 // SaveHeartbeat records live metrics and rolls the traffic accounting forward.
 func (s *Store) SaveHeartbeat(id string, hb *models.Heartbeat, meta models.NodeMeta) {
+	now := s.clock()
+	sm := sampleFrom(hb, now.Unix())
+
 	s.mu.Lock()
 	cp := *hb
 	s.metrics[id] = &cp
-	s.seen[id] = time.Now()
-	s.pushHistory(id, models.Sample{
-		T:    s.seen[id].Unix(),
-		CPU:  hb.CPUUsage,
-		Mem:  hb.MemUsage,
-		Up:   hb.NetUp,
-		Down: hb.NetDown,
-	})
+	s.seen[id] = now
+	s.pushHistory(id, sm)
+	persist := s.dueToPersistLocked(id, sm.T)
+	if persist {
+		s.lastPersist[id] = sm.T
+	}
 	s.mu.Unlock()
+
+	if persist {
+		s.insertSample(id, sm)
+		s.PruneSamples()
+	}
 
 	if meta.TrafficPeriod > 0 {
 		s.rollTraffic(id, hb, meta.TrafficPeriod)
 	}
+}
+
+func sampleFrom(hb *models.Heartbeat, t int64) models.Sample {
+	return models.Sample{
+		T:      t,
+		CPU:    hb.CPUUsage,
+		Mem:    hb.MemUsage,
+		Up:     hb.NetUp,
+		Down:   hb.NetDown,
+		LatCT:  hb.LatencyCT,
+		LatCU:  hb.LatencyCU,
+		LatCM:  hb.LatencyCM,
+		LossCT: hb.LossCT,
+		LossCU: hb.LossCU,
+		LossCM: hb.LossCM,
+	}
+}
+
+// dueToPersistLocked reports whether smT is far enough after the last persisted
+// sample. Caller holds s.mu.
+func (s *Store) dueToPersistLocked(id string, smT int64) bool {
+	last, ok := s.lastPersist[id]
+	if !ok {
+		return true
+	}
+	if smT <= last {
+		return false
+	}
+	return time.Duration(smT-last)*time.Second >= s.persistEvery
 }
 
 func (s *Store) pushHistory(id string, sm models.Sample) {
@@ -217,9 +315,91 @@ func (s *Store) pushHistory(id string, sm models.Sample) {
 		}
 		copy(h, h[1:])
 		h[len(h)-1] = sm
+		s.history[id] = h
 		return
 	}
 	s.history[id] = append(h, sm)
+}
+
+func (s *Store) insertSample(id string, sm models.Sample) {
+	_, _ = s.db.Exec(`INSERT OR REPLACE INTO samples
+		(node_id, t, cpu, mem, up, down, lat_ct, lat_cu, lat_cm, loss_ct, loss_cu, loss_cm)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, sm.T, sm.CPU, sm.Mem, sm.Up, sm.Down,
+		sm.LatCT, sm.LatCU, sm.LatCM, sm.LossCT, sm.LossCU, sm.LossCM)
+}
+
+// PruneSamples drops SQLite samples older than HISTORY_RETENTION.
+func (s *Store) PruneSamples() {
+	cutoff := s.clock().Add(-s.retention).Unix()
+	_, _ = s.db.Exec(`DELETE FROM samples WHERE t < ?`, cutoff)
+}
+
+func (s *Store) hydrateHistory() error {
+	rows, err := s.db.Query(`
+		SELECT node_id, t, cpu, mem, up, down, lat_ct, lat_cu, lat_cm, loss_ct, loss_cu, loss_cm
+		FROM (
+		  SELECT node_id, t, cpu, mem, up, down, lat_ct, lat_cu, lat_cm, loss_ct, loss_cu, loss_cm,
+		         ROW_NUMBER() OVER (PARTITION BY node_id ORDER BY t DESC) AS rn
+		  FROM samples
+		)
+		WHERE rn <= ?
+		ORDER BY node_id, t`, s.historyCap)
+	if err != nil {
+		return fmt.Errorf("hydrate history: %w", err)
+	}
+	defer rows.Close()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for rows.Next() {
+		var id string
+		var sm models.Sample
+		var up, down int64
+		if err := rows.Scan(&id, &sm.T, &sm.CPU, &sm.Mem, &up, &down,
+			&sm.LatCT, &sm.LatCU, &sm.LatCM, &sm.LossCT, &sm.LossCU, &sm.LossCM); err != nil {
+			return err
+		}
+		sm.Up = uint64(up)
+		sm.Down = uint64(down)
+		s.history[id] = append(s.history[id], sm)
+		s.lastPersist[id] = sm.T
+	}
+	return rows.Err()
+}
+
+// HasNode reports whether a node id exists.
+func (s *Store) HasNode(id string) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE id = ?`, id).Scan(&n)
+	return n > 0, err
+}
+
+// Retention returns the configured sample retention window.
+func (s *Store) Retention() time.Duration { return s.retention }
+
+// ListHistory returns persisted samples in [from, to] (unix seconds, inclusive).
+func (s *Store) ListHistory(id string, from, to int64) ([]models.Sample, error) {
+	rows, err := s.db.Query(`
+		SELECT t, cpu, mem, up, down, lat_ct, lat_cu, lat_cm, loss_ct, loss_cu, loss_cm
+		FROM samples WHERE node_id = ? AND t >= ? AND t <= ? ORDER BY t`, id, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []models.Sample{}
+	for rows.Next() {
+		var sm models.Sample
+		var up, down int64
+		if err := rows.Scan(&sm.T, &sm.CPU, &sm.Mem, &up, &down,
+			&sm.LatCT, &sm.LatCU, &sm.LatCM, &sm.LossCT, &sm.LossCU, &sm.LossCM); err != nil {
+			return nil, err
+		}
+		sm.Up = uint64(up)
+		sm.Down = uint64(down)
+		out = append(out, sm)
+	}
+	return out, rows.Err()
 }
 
 // rollTraffic advances a node's period, re-baselining the counters on rollover.
@@ -382,6 +562,9 @@ func (s *Store) ListStatus() ([]models.NodeStatus, error) {
 			// subscription, and the zero value would read as "none configured".
 			Traffic: s.computeTraffic(id, meta, nil),
 		}
+		if h := s.history[id]; len(h) > 0 {
+			st.History = append([]models.Sample(nil), h...)
+		}
 		if t, ok := s.seen[id]; ok {
 			st.LastSeen = t
 			st.Online = now.Sub(t) < s.offlineAfter
@@ -389,9 +572,6 @@ func (s *Store) ListStatus() ([]models.NodeStatus, error) {
 				cp := *m
 				st.Metrics = &cp
 				st.Traffic = s.computeTraffic(id, meta, &cp)
-			}
-			if h := s.history[id]; len(h) > 0 {
-				st.History = append([]models.Sample(nil), h...)
 			}
 		}
 		out = append(out, st)

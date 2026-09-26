@@ -767,6 +767,13 @@ input:focus-visible,
 .isp-cell.q-warn .isp-lat { color: var(--warn-text); }
 .isp-cell.q-bad .isp-lat { color: var(--crit-text); }
 
+.isp .spark,
+.isp svg.spark {
+  height: 18px;
+  margin-top: 0.18rem;
+}
+.isp .spark path.line { stroke-width: 1.5; }
+
 /* the left rule is a second channel beside the number, so hue is never alone */
 .isp-cell.q-ok { border-left-color: color-mix(in oklab, var(--good) 55%, var(--rule)); }
 .isp-cell.q-warn { border-left-color: color-mix(in oklab, var(--warn) 55%, var(--rule)); }

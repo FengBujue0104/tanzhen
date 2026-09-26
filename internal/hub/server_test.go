@@ -405,3 +405,61 @@ func TestPublicServesAdminWhenShared(t *testing.T) {
 	}
 }
 
+func TestNodeHistoryEndpoint(t *testing.T) {
+	static := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("x")}}
+	srv := newTestServer(t, static)
+	id, _, err := srv.Store.CreateNode("n", models.NodeMeta{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Store.SaveHeartbeat(id, &models.Heartbeat{
+		CPUUsage: 9, LatencyCT: 11, LatencyCU: -1, LatencyCM: 22,
+		LossCT: 0, LossCU: -1, LossCM: 3,
+	}, models.NodeMeta{})
+
+	h := srv.Handler()
+	rr := do(t, h, "GET", "/api/nodes/"+id+"/history", "", nil)
+	if rr.Code != 200 {
+		t.Fatalf("history: %d %s", rr.Code, rr.Body.String())
+	}
+	var body struct {
+		Samples []models.Sample `json:"samples"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Samples) != 1 || body.Samples[0].CPU != 9 ||
+		body.Samples[0].LatCT != 11 || body.Samples[0].LatCU != -1 {
+		t.Fatalf("samples: %+v", body.Samples)
+	}
+
+	if rr := do(t, h, "GET", "/api/nodes/nope/history", "", nil); rr.Code != 404 {
+		t.Fatalf("missing node: %d %s", rr.Code, rr.Body.String())
+	}
+	if rr := do(t, h, "GET", "/api/nodes/"+id+"/history?from=abc", "", nil); rr.Code != 400 {
+		t.Fatalf("bad from: %d", rr.Code)
+	}
+
+	rr = do(t, h, "GET", "/api/nodes/"+id+"/history?from=1&to=2", "", nil)
+	if rr.Code != 200 {
+		t.Fatalf("empty window: %d", rr.Code)
+	}
+	body.Samples = nil
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Samples == nil || len(body.Samples) != 0 {
+		t.Fatalf("expected empty samples array, got %+v", body.Samples)
+	}
+
+	rr = do(t, h, "GET", "/api/nodes/"+id+"/history?from=0", "", nil)
+	if rr.Code != 200 {
+		t.Fatalf("clamped from: %d %s", rr.Code, rr.Body.String())
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Samples) != 1 {
+		t.Fatalf("clamped: %+v", body.Samples)
+	}
+}

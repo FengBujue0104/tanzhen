@@ -171,10 +171,9 @@
       this.defs = defs || [];
       this.zeroLine = !!opts.zeroLine;
       this.maxCap = opts.maxCap || null;
-      // /api/status ships history samples flat — {t, cpu, mem, up, down} — and
-      // each plot only wants its own keys, so derive the per-series values here
-      // rather than carrying a nested object over the wire. Doing it in set()
-      // keeps the rest of the plot key-agnostic.
+      // /api/status ships history samples flat — {t, cpu, mem, up, down, lat_*} —
+      // and each plot only wants its own keys, so derive the per-series values
+      // here rather than carrying a nested object over the wire.
       this.samples = (samples || []).map((s) => ({
         t: s.t,
         values: Object.fromEntries(this.defs.map((d) => [d.key, s[d.key]])),
@@ -184,8 +183,8 @@
 
     geometry() {
       const w = Math.max(56, this.host.clientWidth || 170);
-      const h = 30;
-      return { w, h, padX: 5, padY: 5 };
+      const h = Math.max(14, this.host.clientHeight || 30);
+      return { w, h, padX: 5, padY: Math.min(5, Math.max(2, Math.round(h / 8))) };
     }
 
     scales() {
@@ -193,6 +192,7 @@
       for (const s of this.samples) {
         for (const d of this.defs) {
           const v = s.values[d.key];
+          if (!plottable(v)) continue;
           if (v > rawMax) rawMax = v;
         }
       }
@@ -231,17 +231,24 @@
 
       for (const d of this.defs) {
         if (n === 1) {
+          const v = this.samples[0].values[d.key];
+          if (!plottable(v)) continue;
           const cx = g.padX + (g.w - g.padX * 2) / 2;
-          const dot = svgEl("circle", { class: "end", cx, cy: this.yAt(this.samples[0].values[d.key], max, g) });
+          const dot = svgEl("circle", { class: "end", cx, cy: this.yAt(v, max, g) });
           dot.style.fill = d.color;
           svg.appendChild(dot);
           continue;
         }
         let pt = "";
+        let drawing = false;
         for (let i = 0; i < n; i++) {
-          pt += (i ? "L" : "M") + this.xAt(i, n, g).toFixed(1) + " " +
-            this.yAt(this.samples[i].values[d.key], max, g).toFixed(1);
+          const v = this.samples[i].values[d.key];
+          if (!plottable(v)) { drawing = false; continue; }
+          pt += (drawing ? "L" : "M") + this.xAt(i, n, g).toFixed(1) + " " +
+            this.yAt(v, max, g).toFixed(1);
+          drawing = true;
         }
+        if (!pt) continue;
         // Inline style, not a stroke="" presentation attribute: a presentation
         // attribute sits below the stylesheet rule and would lose to it.
         const path = svgEl("path", { class: "line", d: pt });
@@ -251,7 +258,9 @@
 
       const last = this.samples[n - 1];
       for (const d of this.defs) {
-        const dot = svgEl("circle", { class: "end", cx: this.xAt(n - 1, n, g), cy: this.yAt(last.values[d.key], max, g) });
+        const v = last.values[d.key];
+        if (!plottable(v)) continue;
+        const dot = svgEl("circle", { class: "end", cx: this.xAt(n - 1, n, g), cy: this.yAt(v, max, g) });
         dot.style.fill = d.color;
         svg.appendChild(dot);
       }
@@ -284,7 +293,9 @@
       this.svg.appendChild(svgEl("line", { class: "cross", x1: x, x2: x, y1: 1, y2: g.h - 1 }));
       const s = this.samples[this.idx];
       for (const d of this.defs) {
-        const dot = svgEl("circle", { class: "hover", cx: x, cy: this.yAt(s.values[d.key], max, g) });
+        const v = s.values[d.key];
+        if (!plottable(v)) continue;
+        const dot = svgEl("circle", { class: "hover", cx: x, cy: this.yAt(v, max, g) });
         dot.style.fill = d.color;
         this.svg.appendChild(dot);
       }
@@ -321,6 +332,10 @@
       this.paintHover(this.geometry(), 1);
       tip.classList.remove("show");
     }
+  }
+
+  function plottable(v) {
+    return v != null && isFinite(v) && v >= 0;
   }
 
   function drawAll() { for (const s of sparks) s.draw(); }
@@ -405,15 +420,25 @@
     return wrap;
   }
 
-  function ispRow(m) {
+  function ispRow(m, hist) {
     const row = el("div", "isp");
-    const nets = [["电信", m.latency_ct, m.loss_ct], ["联通", m.latency_cu, m.loss_cu], ["移动", m.latency_cm, m.loss_cm]];
-    for (const [name, lat, loss] of nets) {
+    const nets = [
+      ["电信", m.latency_ct, m.loss_ct, "lat_ct"],
+      ["联通", m.latency_cu, m.loss_cu, "lat_cu"],
+      ["移动", m.latency_cm, m.loss_cm, "lat_cm"],
+    ];
+    const span = historySpan(hist);
+    for (const [name, lat, loss, key] of nets) {
       const c = el("div", "isp-cell " + ispClass(lat, loss));
       c.appendChild(el("div", "isp-net", name));
       c.appendChild(el("div", "isp-lat", fmtMs(lat)));
       const l = (loss == null || !isFinite(loss) || loss < 0) ? "—" : loss.toFixed(1) + "%";
       c.appendChild(el("div", "isp-loss", "丢包 " + l));
+      const host = sparkHost(name + "延迟", span);
+      host.className = "spark isp-spark";
+      c.appendChild(host);
+      const spark = new Spark(host);
+      spark.set(hist, [{ key, name: name + "延迟", fmt: fmtMs }]);
       row.appendChild(c);
     }
     return row;
@@ -570,7 +595,8 @@
     art.appendChild(gauges);
 
     art.appendChild(trafficBlock(n));
-    art.appendChild(ispRow(m));
+    const hist = n.history || [];
+    art.appendChild(ispRow(m, hist));
     const tags = tagsBlock(meta);
     if (tags.childNodes.length) art.appendChild(tags);
 
@@ -581,7 +607,6 @@
     art.appendChild(foot);
 
     /* sparklines — one plot per metric, single axis, shared time base */
-    const hist = n.history || [];
     const cpuSpark = new Spark(cpuHost);
     const memSpark = new Spark(memHost);
     const netSpark = new Spark(netHost);

@@ -88,13 +88,20 @@ type Traffic struct {
 	Pct        float64    `json:"pct"`       // 0-100; -1 when unlimited
 }
 
-// Sample is one point of the in-metric history ring.
+// Sample is one point of the metric history ring (memory) / samples table (SQLite).
+// Latency and loss use -1 for N/A (probe failed or not yet run).
 type Sample struct {
-	T    int64   `json:"t"`    // unix seconds
-	CPU  float64 `json:"cpu"`  //
-	Mem  float64 `json:"mem"`  //
-	Up   uint64  `json:"up"`   // bytes/s
-	Down uint64  `json:"down"` // bytes/s
+	T      int64   `json:"t"`       // unix seconds
+	CPU    float64 `json:"cpu"`     //
+	Mem    float64 `json:"mem"`     //
+	Up     uint64  `json:"up"`      // bytes/s
+	Down   uint64  `json:"down"`    // bytes/s
+	LatCT  float64 `json:"lat_ct"`  // 电信 latency ms; -1 = N/A
+	LatCU  float64 `json:"lat_cu"`  // 联通
+	LatCM  float64 `json:"lat_cm"`  // 移动
+	LossCT float64 `json:"loss_ct"` // 电信 loss %; -1 = N/A
+	LossCU float64 `json:"loss_cu"`
+	LossCM float64 `json:"loss_cm"`
 }
 
 // NodeStatus is the public view of a node.
