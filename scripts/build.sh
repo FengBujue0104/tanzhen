@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 mkdir -p dist releases
 
-VERSION="${VERSION:-$(git describe --tags --always 2>/dev/null || echo 0.1.3)}"
+VERSION="${VERSION:-$(git describe --tags --always 2>/dev/null || echo 0.1.4)}"
 PKG="github.com/FengBujue0104/tanzhen/internal/agent"
 LDFLAGS="-s -w -X ${PKG}.Version=${VERSION}"
 
